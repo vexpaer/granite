@@ -14,7 +14,9 @@ For pull requests and non-tag branch pushes, the Debug job runs:
 6. `npm run build`
 7. Rust setup with all four Android targets
 8. Java 17 setup
-9. Android SDK, build-tools, NDK, and CMake installation
+9. Android SDK, build-tools, NDK, and CMake installation; the setup action
+   installs only `platform-tools`, avoiding its obsolete default `tools`
+   package before the explicit `sdkmanager` installation
 10. `tauri android init` only when `src-tauri/gen/android/app/build.gradle.kts`
    is absent
 11. `chmod +x src-tauri/gen/android/gradlew`
