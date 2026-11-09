@@ -1,0 +1,9 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = """
+Internal native adapter. The webview reaches Android through the application's
+single `host_call` command, so this permission set intentionally enables no
+plugin commands.
+"""
+permissions = []

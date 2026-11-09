@@ -1,0 +1,50 @@
+{
+  "name": "granite-reader",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build",
+    "android:init": "tauri android init",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@cordisjs/core": "^3.18.1",
+    "@fontsource/cormorant-garamond": "^5.2.8",
+    "@lingo-reader/mobi-parser": "latest",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "dompurify": "^3.3.0",
+    "jszip": "^3.10.1",
+    "lucide-vue-next": "^0.468.0",
+    "marked": "^16.4.1",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.394",
+    "semver": "^7.7.3",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/node": "^22.19.0",
+    "@types/semver": "^7.7.1",
+    "@vitejs/plugin-vue": "^6.0.2",
+    "fake-indexeddb": "^6.2.4",
+    "jsdom": "^27.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "vitest": "^3.2.4",
+    "vue-tsc": "^3.1.3"
+  }
+}

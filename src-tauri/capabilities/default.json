@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core capability for the Granite main window. Native files, credentials, and dialogs remain behind host_call.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
+

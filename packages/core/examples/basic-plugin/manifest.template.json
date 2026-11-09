@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "example.basic",
+  "name": "Basic Sandbox Plugin",
+  "version": "1.0.0",
+  "apiVersion": "^1.0.0",
+  "main": "main.js",
+  "dependencies": {},
+  "optionalDependencies": {},
+  "permissions": [
+    "storage.namespace",
+    "ui.register"
+  ],
+  "permissionScopes": {
+    "storage.namespace": [
+      "activation-count"
+    ],
+    "ui.register": [
+      "settings.pages"
+    ]
+  },
+  "contributes": [
+    {
+      "id": "example.basic:settings",
+      "slot": "settings.pages"
+    }
+  ],
+  "platforms": [
+    "windows",
+    "android"
+  ],
+  "author": "Granite contributors",
+  "license": "AGPL-3.0-only",
+  "repository": "https://example.invalid/granite-basic-plugin",
+  "integrity": "__FILLED_BY_BUILD__",
+  "source": {
+    "kind": "local",
+    "uri": "packages/core/examples/basic-plugin"
+  },
+  "trust": "untrusted",
+  "ui": {
+    "kind": "iframe"
+  },
+  "description": "Minimal package demonstrating the untrusted iframe SDK."
+}
