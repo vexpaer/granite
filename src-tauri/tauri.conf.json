@@ -30,7 +30,14 @@
     "targets": "all",
     "category": "Productivity",
     "shortDescription": "A local-first, plugin-first ebook reader",
-    "longDescription": "Granite is a local-first ebook reader and personal library with native Windows and Android file access."
+    "longDescription": "Granite is a local-first ebook reader and personal library with native Windows and Android file access.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }
 

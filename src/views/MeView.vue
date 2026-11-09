@@ -251,7 +251,7 @@ function openItem(route: string, id?: string) {
   min-width: 0;
   gap: 0.1rem;
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .me-status strong {
@@ -319,7 +319,7 @@ function openItem(route: string, id?: string) {
 .me-group__copy span {
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

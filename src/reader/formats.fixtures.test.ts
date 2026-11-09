@@ -101,15 +101,18 @@ describe('reader format fixtures', () => {
     await expect(readPdfAnnotations(bytes)).resolves.toEqual([]);
   });
 
-  it('parses an actual public-domain MOBI sample from the MIT parser repository', async () => {
+  it('parses the Gutenberg MOBI fixture with its title, metadata, and searchable content', async () => {
     const bytes = new Uint8Array(
       fs.readFileSync(path.join(import.meta.dirname, '__fixtures__', 'Around-the-World.mobi')),
     );
     expect(sniffFormat(bytes, 'Around-the-World.mobi')).toBe('mobi');
     const parsed = await parseMobi(bytes);
     expect(parsed.format).toBe('mobi');
+    expect(parsed.title).toMatch(/Around the World in Eighty Days/i);
+    expect(parsed.authors.join(' ')).toMatch(/Verne/i);
     expect(parsed.chapters.length).toBeGreaterThan(0);
     expect(parsed.chapters.some((chapter) => chapter.text.length > 1_000)).toBe(true);
+    expect(parsed.chapters.some((chapter) => /Fogg/i.test(chapter.text))).toBe(true);
     expect(parsed.toc.length).toBeGreaterThan(0);
     parsed.destroy?.();
   });

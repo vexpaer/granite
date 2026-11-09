@@ -60,7 +60,7 @@ function active(route: string) {
   border-radius: 12px;
   color: var(--text-secondary);
   background: transparent;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 620;
 }
 

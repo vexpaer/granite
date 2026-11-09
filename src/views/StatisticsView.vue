@@ -721,8 +721,8 @@ async function saveGoal() {
       <div class="correction-book">
         <BookOpenCheck :size="18" />
         <span>
-          <strong>{{ app.books.find((book) => book.id === correctionTarget.bookId)?.title || '书籍记录不可用' }}</strong>
-          <small>会话 {{ correctionTarget.id }}</small>
+          <strong>{{ app.books.find((book) => book.id === correctionTarget?.bookId)?.title || '书籍记录不可用' }}</strong>
+          <small>会话 {{ correctionTarget?.id }}</small>
         </span>
       </div>
       <div class="form-grid correction-form">
@@ -800,7 +800,7 @@ async function saveGoal() {
 
 .stat-card > span {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .stat-card--primary > span,
@@ -817,7 +817,7 @@ async function saveGoal() {
 
 .stat-card > small {
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .stats-layout {
@@ -884,7 +884,7 @@ async function saveGoal() {
   overflow: hidden;
   width: 100%;
   color: var(--text-tertiary);
-  font-size: 0.58rem;
+  font-size: 0.75rem;
   text-align: center;
   text-overflow: ellipsis;
 }
@@ -913,7 +913,7 @@ async function saveGoal() {
 
 .goal-detail__ring :deep(.progress-ring__content small) {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .goal-detail__facts {
@@ -933,7 +933,7 @@ async function saveGoal() {
 
 .goal-detail__facts span {
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .goal-detail__facts strong {
@@ -947,7 +947,7 @@ async function saveGoal() {
 
 .goal-form > label {
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 
@@ -965,7 +965,7 @@ async function saveGoal() {
 
 .goal-form > div > span {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .calendar-heading > div {
@@ -976,7 +976,7 @@ async function saveGoal() {
 
 .calendar-heading > div > strong {
   min-width: 105px;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   text-align: center;
 }
 
@@ -993,7 +993,7 @@ async function saveGoal() {
 
 .calendar-weekdays span {
   color: var(--text-tertiary);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
   text-align: center;
 }
 
@@ -1004,7 +1004,7 @@ async function saveGoal() {
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .calendar-grid .is-outside {
@@ -1035,7 +1035,7 @@ async function saveGoal() {
   gap: 4px;
   margin-top: 0.6rem;
   color: var(--text-tertiary);
-  font-size: 0.58rem;
+  font-size: 0.75rem;
 }
 
 .calendar-legend i {
@@ -1061,7 +1061,7 @@ async function saveGoal() {
 .session-row__time {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .session-row div {
@@ -1125,7 +1125,7 @@ async function saveGoal() {
   display: grid;
   place-items: center;
   color: var(--text-secondary);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
 }
 
 .distribution__donut strong {
@@ -1146,7 +1146,7 @@ async function saveGoal() {
   grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .distribution__legend div > span:first-child {
@@ -1205,7 +1205,7 @@ async function saveGoal() {
 .ranking-book strong,
 .progress-books strong {
   overflow: hidden;
-  font-size: 0.73rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1213,7 +1213,7 @@ async function saveGoal() {
 .ranking-book small,
 .progress-books small {
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .session-dot {
@@ -1274,7 +1274,7 @@ async function saveGoal() {
 
 .correction-book small {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .correction-form {
@@ -1372,7 +1372,7 @@ async function saveGoal() {
   }
 
   .trend-chart__column small {
-    font-size: 0.5rem;
+    font-size: 0.75rem;
   }
 }
 

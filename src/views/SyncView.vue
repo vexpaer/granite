@@ -452,7 +452,7 @@ async function savePolicy() {
   border-radius: 6px;
   color: var(--accent-strong);
   background: var(--accent-soft);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   font-weight: 750;
 }
 
@@ -476,7 +476,7 @@ async function savePolicy() {
 
 .provider-card dt {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .provider-card dd {
@@ -486,7 +486,7 @@ async function savePolicy() {
   gap: 0.3rem;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -523,7 +523,7 @@ async function savePolicy() {
 .provider-empty p {
   max-width: 50ch;
   margin: 0;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   line-height: 1.6;
 }
 
@@ -545,7 +545,7 @@ async function savePolicy() {
   align-items: center;
   gap: 0.4rem;
   color: var(--text-tertiary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -587,7 +587,7 @@ async function savePolicy() {
 
 .policy-grid small {
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -613,7 +613,7 @@ async function savePolicy() {
 }
 
 .selector-list .checkbox-line {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .policy-footer {
@@ -657,7 +657,7 @@ async function savePolicy() {
 .no-conflict p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .no-conflict {
@@ -688,7 +688,7 @@ async function savePolicy() {
 
 .provider-type-choice small {
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .credential-note {
@@ -699,7 +699,7 @@ async function savePolicy() {
   border-radius: 10px;
   color: var(--text-secondary);
   background: var(--surface-muted);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 

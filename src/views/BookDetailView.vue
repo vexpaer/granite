@@ -465,7 +465,7 @@ function annotationIcon(type: string) {
   flex-wrap: wrap;
   gap: 0.45rem;
   color: var(--accent-strong);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -540,12 +540,12 @@ function annotationIcon(type: string) {
 
 .detail-progress > span {
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .detail-progress > small {
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .file-alert {
@@ -597,7 +597,7 @@ function annotationIcon(type: string) {
 
 .metadata-grid dt {
   color: var(--text-tertiary);
-  font-size: 0.73rem;
+  font-size: 0.75rem;
 }
 
 .metadata-grid dd {
@@ -628,7 +628,7 @@ function annotationIcon(type: string) {
 
 .location-facts span {
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .location-facts strong {
@@ -660,7 +660,7 @@ blockquote {
   border-radius: 999px;
   color: var(--text-secondary);
   background: var(--surface-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .annotation-icon {

@@ -18,7 +18,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Tauri CLI 2.12.4 installs and compiles Android SDK 37 and NDK 29.
-  ANDROID_COMPILE_SDK: "37"
+  ANDROID_COMPILE_SDK: "37.0"
   ANDROID_BUILD_TOOLS: "37.0.0"
   ANDROID_NDK_VERSION: "29.0.13846066"
 
@@ -44,6 +44,9 @@ jobs:
 
       - name: Type-check
         run: npm run typecheck
+
+      - name: Create reader test fixtures
+        run: node scripts/create-fixtures.mjs
 
       - name: Run unit tests
         run: npm test
@@ -79,7 +82,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager \
             "platform-tools" \
-            "platforms;android-${ANDROID_COMPILE_SDK}.0" \
+            "platforms;android-${ANDROID_COMPILE_SDK}" \
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;3.22.1"
@@ -89,6 +92,7 @@ jobs:
           if [[ ! -f src-tauri/gen/android/app/build.gradle.kts ]]; then
             npx tauri android init --ci --skip-targets-install
           fi
+          chmod +x src-tauri/gen/android/gradlew
 
       - name: Build Debug APK
         run: npx tauri android build --debug --apk --target aarch64 --ci
@@ -103,7 +107,7 @@ jobs:
           path: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             artifacts/android/debug/SHA256SUMS
-            artifacts/android/debug/apk-inspection.txt
+            artifacts/android/debug/*.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -133,6 +137,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Create reader test fixtures
+        run: node scripts/create-fixtures.mjs
+
       - name: Run unit tests
         run: npm test
 
@@ -167,7 +174,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager \
             "platform-tools" \
-            "platforms;android-${ANDROID_COMPILE_SDK}.0" \
+            "platforms;android-${ANDROID_COMPILE_SDK}" \
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;${ANDROID_NDK_VERSION}" \
             "cmake;3.22.1"
@@ -177,6 +184,7 @@ jobs:
           if [[ ! -f src-tauri/gen/android/app/build.gradle.kts ]]; then
             npx tauri android init --ci --skip-targets-install
           fi
+          chmod +x src-tauri/gen/android/gradlew
 
       - name: Configure release signing from GitHub Secrets
         env:
@@ -195,7 +203,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p artifacts/android/release-assets
-          APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | sort | head -n 1)"
+          APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -path '*/release/*' -name '*.apk' | sort | head -n 1)"
           test -n "$APK"
           cp "$APK" "artifacts/android/release-assets/Granite-${GITHUB_REF_NAME}-aarch64.apk"
           cd artifacts/android/release-assets

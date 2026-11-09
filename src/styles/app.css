@@ -89,7 +89,7 @@
   border-radius: 6px;
   color: var(--text-tertiary);
   background: var(--surface-muted);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
 }
 
 .sync-indicator {
@@ -127,6 +127,16 @@
   animation: spin 1.8s linear infinite;
 }
 
+.app-header-plugin-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.app-header-plugin-slot:empty {
+  display: none;
+}
+
 .app-scroll-area {
   min-height: 0;
   flex: 1;
@@ -138,6 +148,35 @@
 .app-content {
   padding: clamp(1.2rem, 3.5vw, 3rem);
   padding-top: clamp(1rem, 2.5vw, 2.2rem);
+}
+
+.plugin-route-state {
+  display: grid;
+  min-height: min(560px, calc(100dvh - 180px));
+  place-items: center;
+  align-content: center;
+  gap: 0.8rem;
+  padding: 2rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.plugin-route-state > svg {
+  color: var(--warning);
+}
+
+.plugin-route-state h1 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  font-weight: 600;
+}
+
+.plugin-route-state p {
+  max-width: 54ch;
+  margin: 0 0 0.4rem;
+  line-height: 1.65;
 }
 
 .app-frame--reader {
@@ -211,7 +250,7 @@
 
 .app-loading div span {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .app-loading .loading-spinner {
@@ -259,7 +298,7 @@
   border-radius: 6px;
   color: currentColor;
   background: transparent;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .global-error button:hover,

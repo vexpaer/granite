@@ -182,7 +182,7 @@ function names(ids: string[], values: { id: string; name: string }[]) {
 
 .book-row__updated {
   color: var(--text-tertiary);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .book-row__actions {

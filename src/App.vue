@@ -83,9 +83,10 @@ const pluginPageEntry = computed(() => {
     ) || null
   );
 });
-const pluginPageTitle = computed(
-  () => pluginPageEntry.value?.title || pluginRegistryReady.value ? pluginPageEntry.value?.title || '插件页面' : '正在加载插件',
-);
+const pluginPageTitle = computed(() => {
+  if (!pluginRegistryReady.value) return '正在加载插件';
+  return pluginPageEntry.value?.title || '插件页面';
+});
 const currentRouteTitle = computed(() => routeTitle(app.route.name));
 const fallback = { template: '<div />' };
 const views = {
@@ -158,6 +159,7 @@ watch(
 );
 
 function routeTitle(name: string) {
+  if (name.startsWith('plugin:')) return pluginPageTitle.value;
   return {
     home: '主页',
     bookshelf: '书架',
@@ -176,6 +178,14 @@ function routeTitle(name: string) {
     diagnostics: '关于与诊断',
     reader: '阅读',
   }[name] || 'Granite';
+}
+
+function contributionRouteId(entry: PluginUiEntry) {
+  const colonPrefix = `${entry.pluginId}:`;
+  const slashPrefix = `${entry.pluginId}/`;
+  if (entry.id.startsWith(colonPrefix)) return entry.id.slice(colonPrefix.length);
+  if (entry.id.startsWith(slashPrefix)) return entry.id.slice(slashPrefix.length);
+  return entry.id;
 }
 
 function effectiveTheme() {
@@ -238,12 +248,31 @@ onMounted(async () => {
     await app.init();
   }
   document.title = `${routeTitle(app.route.name)} · Granite`;
+  try {
+    const manager = await import('./services/plugin-manager');
+    const syncEntries = () => {
+      pluginPageEntries.value = manager.pluginUiContributions
+        .filter((entry) => entry.type === 'page')
+        .map((entry) => ({ ...entry }));
+    };
+    syncEntries();
+    stopPluginRegistryWatch = watch(
+      () => manager.pluginUiContributions.slice(),
+      syncEntries,
+      { deep: false },
+    );
+  } catch (error) {
+    app.notify(`插件页面目录读取失败：${String(error)}`);
+  } finally {
+    pluginRegistryReady.value = true;
+  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize);
   window.removeEventListener('keydown', onGlobalKeydown);
   window.matchMedia?.('(prefers-color-scheme: dark)').removeEventListener('change', applyAppearance);
+  stopPluginRegistryWatch?.();
 });
 </script>
 
@@ -272,7 +301,7 @@ onBeforeUnmount(() => {
         >
           <ArrowLeft :size="18" />
         </button>
-        <span v-if="android" class="android-page-title">{{ routeTitle(app.route.name) }}</span>
+        <span v-if="android" class="android-page-title">{{ currentRouteTitle }}</span>
         <form class="global-search" role="search" @submit.prevent="submitSearch">
           <Search :size="18" aria-hidden="true" />
           <input
@@ -297,12 +326,33 @@ onBeforeUnmount(() => {
         >
           <component :is="syncMeta.icon" :size="19" />
         </button>
+        <div class="app-header-plugin-slot">
+          <PluginSlots slot="app.header.actions" />
+        </div>
       </header>
 
       <main ref="scrollArea" class="app-scroll-area">
         <div class="app-content">
           <Transition name="route" mode="out-in">
-            <component :is="currentView" :key="routeKey" />
+            <div
+              v-if="pluginRoute && !pluginPageEntry"
+              :key="routeKey"
+              class="plugin-route-state"
+            >
+              <div v-if="!pluginRegistryReady" class="loading-spinner" aria-hidden="true"></div>
+              <template v-else>
+                <AlertCircle :size="28" />
+                <h1>这个插件页面当前不可用</h1>
+                <p>插件可能未安装、已禁用，或没有注册对应的命名空间页面。</p>
+                <button class="button button--secondary" type="button" @click="app.back()">返回上一页</button>
+              </template>
+            </div>
+            <component
+              :is="currentView"
+              v-else
+              :key="routeKey"
+              v-bind="currentViewProps"
+            />
           </Transition>
         </div>
       </main>

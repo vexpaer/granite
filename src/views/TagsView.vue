@@ -268,7 +268,7 @@ async function confirmMerge() {
   border-bottom: 1px solid var(--border);
   color: var(--text-tertiary);
   background: var(--surface-muted);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .tag-row {
@@ -313,7 +313,7 @@ async function confirmMerge() {
 .tag-row__identity small,
 .tag-row > span {
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .tag-row > button:not(.tag-row__identity) {
@@ -323,7 +323,7 @@ async function confirmMerge() {
   border-radius: 6px;
   color: var(--accent-strong);
   background: var(--accent-wash);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .tag-row__actions {

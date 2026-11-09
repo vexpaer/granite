@@ -14,6 +14,7 @@ import {
 import { useApp } from '../stores/app';
 import BookCover from '../components/BookCover.vue';
 import EmptyState from '../components/EmptyState.vue';
+import PluginSlots from '../components/PluginSlots.vue';
 import ProgressRing from '../components/ProgressRing.vue';
 import {
   authorsLabel,
@@ -393,6 +394,10 @@ async function toggleFavorite(bookId: string) {
       </section>
     </div>
 
+    <div class="home-plugin-slot">
+      <PluginSlots slot="app.dashboard" />
+    </div>
+
     <section class="surface-card tags-strip">
       <div class="section-heading">
         <h2>我的标签</h2>
@@ -623,7 +628,7 @@ blockquote {
 
 .continue-card__progress span {
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .continue-card__action {
@@ -665,7 +670,7 @@ blockquote {
 
 .recent-book > span {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .data-list .note-row {
@@ -690,7 +695,7 @@ blockquote {
 .note-row time {
   flex: 0 0 auto;
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .stats-mini {
@@ -711,7 +716,7 @@ blockquote {
 
 .stats-mini__hero span {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .stats-mini__hero strong {
@@ -749,7 +754,7 @@ blockquote {
   justify-content: center;
   gap: 0.45rem;
   color: var(--text-tertiary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .stats-mini__facts {
@@ -770,7 +775,7 @@ blockquote {
 
 .stats-mini__facts span {
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .stats-mini__link {
@@ -783,7 +788,7 @@ blockquote {
   margin-top: auto;
   color: var(--accent-strong);
   background: transparent;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 
@@ -807,7 +812,7 @@ blockquote {
 
 .goal-card__main :deep(.progress-ring__content small) {
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .goal-card__copy {
@@ -817,7 +822,7 @@ blockquote {
 
 .goal-card__copy span {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .goal-card__copy strong {
@@ -829,11 +834,20 @@ blockquote {
 .goal-card__copy p {
   margin: 0.35rem 0 0;
   color: var(--accent-strong);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .tags-strip {
   padding: 1.2rem 1.35rem;
+}
+
+.home-plugin-slot {
+  display: grid;
+  gap: 1rem;
+}
+
+.home-plugin-slot:empty {
+  display: none;
 }
 
 .tags-strip__items {
@@ -864,7 +878,7 @@ blockquote {
 
 .home-tag strong {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .home-footnote {
@@ -873,7 +887,7 @@ blockquote {
   gap: 0.55rem;
   padding: 0 0.4rem;
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .home-footnote span:last-child {

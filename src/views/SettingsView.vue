@@ -21,6 +21,7 @@ import {
 import { defaultSettings, useApp } from '../stores/app';
 import DialogPanel from '../components/DialogPanel.vue';
 import PageHeader from '../components/PageHeader.vue';
+import PluginSlots from '../components/PluginSlots.vue';
 import { formatDateTime, initials } from '../components/utils';
 import type { LibraryRoot } from '../types';
 
@@ -43,6 +44,10 @@ const migrationOpen = ref(false);
 const migrationRunning = ref(false);
 const migrationFrom = ref('');
 const migrationTo = ref('');
+const migrationCurrent = ref(0);
+const migrationTotal = ref(0);
+const migrationPhase = ref('');
+const migrationPath = ref('');
 const backupFile = ref<File | null>(null);
 const backupPreview = ref<{ books: number; notes: number; duplicates: number } | null>(null);
 const backupPreviewOpen = ref(false);
@@ -50,6 +55,7 @@ const migrationResult = ref<{ completed: boolean; message: string } | null>(null
 const backupInput = ref<HTMLInputElement>();
 const backgroundInput = ref<HTMLInputElement>();
 let suppressDirty = false;
+let stopMigrationProgress: (() => void) | undefined;
 
 watch(
   draft,
@@ -69,6 +75,12 @@ watch(
 const migrationSources = computed(() => app.roots.filter((root) => root.enabled));
 const shortcutEntries = computed(() => Object.entries(draft.value.shortcuts || {}));
 const disabled = computed(() => saving.value || !dirty.value);
+const migrationPhaseLabel = computed(() => {
+  if (migrationPhase.value === 'verifying') return '正在校验目标副本';
+  if (migrationPhase.value === 'cancelled') return '正在停止迁移';
+  if (migrationPhase.value === 'completed') return '迁移完成';
+  return '正在复制书籍';
+});
 
 async function save() {
   saving.value = true;
@@ -127,6 +139,10 @@ async function confirmRemoveRoot() {
 
 async function migrate() {
   if (!migrationFrom.value || !migrationTo.value || migrationFrom.value === migrationTo.value) return;
+  migrationCurrent.value = 0;
+  migrationTotal.value = 0;
+  migrationPhase.value = '';
+  migrationPath.value = '';
   migrationRunning.value = true;
   try {
     const report = (await app.migrateRoot(migrationFrom.value, migrationTo.value)) as {
@@ -150,6 +166,41 @@ async function migrate() {
     migrationRunning.value = false;
   }
 }
+
+function closeMigrationDialog() {
+  if (migrationRunning.value) return;
+  migrationOpen.value = false;
+}
+
+async function startMigrationProgress() {
+  if (!app.native || stopMigrationProgress) return;
+  try {
+    const { listen } = await import('@tauri-apps/api/event');
+    stopMigrationProgress = await listen<{
+      phase?: string;
+      current?: number;
+      total?: number;
+      relativePath?: string;
+    }>('root.migrate-progress', ({ payload }) => {
+      migrationPhase.value = payload.phase || '';
+      migrationCurrent.value = Math.max(0, Number(payload.current) || 0);
+      migrationTotal.value = Math.max(0, Number(payload.total) || 0);
+      migrationPath.value = payload.relativePath || '';
+    });
+  } catch (error) {
+    app.notify(`无法读取迁移进度：${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function stopMigrationProgressListener() {
+  stopMigrationProgress?.();
+  stopMigrationProgress = undefined;
+}
+
+watch([migrationOpen, migrationRunning], ([open, running]) => {
+  if (open) void startMigrationProgress();
+  else if (!running) stopMigrationProgressListener();
+});
 
 function addShortcut() {
   let name = '新快捷键';
@@ -189,6 +240,7 @@ async function restoreBackup() {
 }
 
 onBeforeUnmount(() => {
+  stopMigrationProgressListener();
   if (dirty.value) draft.value = JSON.parse(JSON.stringify(app.settings));
 });
 </script>
@@ -466,6 +518,10 @@ onBeforeUnmount(() => {
             <p>应用数据库和设置保存在本机可靠存储；书库原文件由用户选择的根目录管理。</p>
           </div>
         </template>
+
+        <div class="settings-plugin-pages">
+          <PluginSlots slot="settings.pages" />
+        </div>
       </section>
     </div>
 
@@ -487,7 +543,7 @@ onBeforeUnmount(() => {
       v-if="migrationOpen"
       title="迁移受管书籍"
       description="源目录中的文件会保留。Granite 仅在校验目标副本成功后更新受管书籍的来源。"
-      @close="migrationOpen = false"
+      @close="closeMigrationDialog"
     >
       <div class="form-grid">
         <label class="form-field">
@@ -507,11 +563,27 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="migrationRunning" class="migration-running" role="status" aria-live="polite">
         <span class="loading-spinner"></span>
-        <div><strong>正在复制并校验书籍</strong><p>当前原生桥未提供逐文件迁移事件，因此这里只显示真实进行中状态，不构造百分比。</p></div>
+        <div>
+          <strong>{{ migrationPhaseLabel }}</strong>
+          <p v-if="migrationTotal">
+            {{ migrationCurrent }} / {{ migrationTotal }}
+            <template v-if="migrationPath"> · {{ migrationPath }}</template>
+          </p>
+          <p v-else>原书库在确认完成前不会被移除。</p>
+          <progress
+            v-if="migrationTotal"
+            class="migration-running__progress"
+            :value="migrationCurrent"
+            :max="migrationTotal"
+            aria-label="书库迁移进度"
+          >
+            {{ Math.round((migrationCurrent / migrationTotal) * 100) }}%
+          </progress>
+        </div>
         <button class="button button--danger button--small" type="button" @click="app.cancelMigration()">取消迁移</button>
       </div>
       <template #footer>
-        <button class="button button--ghost" type="button" :disabled="migrationRunning" @click="migrationOpen = false">关闭</button>
+        <button class="button button--ghost" type="button" :disabled="migrationRunning" @click="closeMigrationDialog">关闭</button>
         <button v-if="migrationRunning" class="button button--danger" type="button" @click="app.cancelMigration()">取消迁移</button>
         <button v-else class="button button--primary" type="button" :disabled="!migrationFrom || !migrationTo || migrationFrom === migrationTo" @click="migrate">开始迁移</button>
       </template>
@@ -520,7 +592,7 @@ onBeforeUnmount(() => {
     <DialogPanel
       v-if="backupPreviewOpen && backupPreview"
       title="确认恢复备份"
-      description="预览来自 app.previewBackup，恢复会合并数据并保留已有内容。"
+      description="恢复会合并备份并保留已有内容；恢复前请核对书籍、笔记与重复项目。"
       @close="backupPreviewOpen = false"
     >
       <div class="backup-preview">
@@ -547,7 +619,7 @@ onBeforeUnmount(() => {
 .saved-note {
   align-self: center;
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .settings-layout {
@@ -606,6 +678,15 @@ onBeforeUnmount(() => {
 .settings-content {
   min-height: 600px;
   padding: clamp(1.2rem, 3vw, 2rem);
+}
+
+.settings-plugin-pages {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-plugin-pages:empty {
+  display: none;
 }
 
 .settings-section-heading {
@@ -678,7 +759,7 @@ onBeforeUnmount(() => {
   border-radius: 13px;
   color: var(--text-secondary);
   background: var(--surface-elevated);
-  font-size: 0.73rem;
+  font-size: 0.75rem;
   text-align: left;
 }
 
@@ -758,7 +839,7 @@ onBeforeUnmount(() => {
 .migration-card p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .migration-result {
@@ -771,7 +852,7 @@ onBeforeUnmount(() => {
   margin-top: 0.7rem;
   color: var(--warning);
   background: color-mix(in srgb, var(--warning) 7%, var(--surface-elevated));
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -806,8 +887,34 @@ onBeforeUnmount(() => {
 .migration-running p {
   margin: 0.15rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
   line-height: 1.5;
+}
+
+.migration-running__progress {
+  width: min(100%, 420px);
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  margin-top: 0.45rem;
+  color: var(--accent);
+  background: var(--surface-muted);
+}
+
+.migration-running__progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--surface-muted);
+}
+
+.migration-running__progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.migration-running__progress::-moz-progress-bar {
+  border-radius: inherit;
+  background: var(--accent);
 }
 
 .profile-preview {
@@ -894,7 +1001,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   color: var(--accent-strong);
   background: var(--accent-soft);
-  font-size: 0.61rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
@@ -902,7 +1009,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -913,7 +1020,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.4rem;
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .root-card__controls {
@@ -925,7 +1032,7 @@ onBeforeUnmount(() => {
 
 .root-card__controls .checkbox-line {
   justify-self: end;
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .root-empty {
@@ -991,12 +1098,12 @@ onBeforeUnmount(() => {
 
 .shortcut-row span {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .shortcut-row .field {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .reserved-shortcuts {
@@ -1009,7 +1116,7 @@ onBeforeUnmount(() => {
   margin-top: 1.2rem;
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 kbd {
@@ -1018,7 +1125,7 @@ kbd {
   border-radius: 4px;
   background: var(--surface-elevated);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .data-actions {
@@ -1049,7 +1156,7 @@ kbd {
 .data-actions article p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -1069,7 +1176,7 @@ kbd {
 .storage-summary span,
 .storage-summary p {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .storage-summary p {
@@ -1109,7 +1216,7 @@ kbd {
 .backup-preview span,
 .backup-warning {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .backup-warning {

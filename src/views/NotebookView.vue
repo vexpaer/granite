@@ -754,7 +754,7 @@ function openWikiLink(title: string) {
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .folder-tree {
@@ -790,14 +790,14 @@ function openWikiLink(title: string) {
 .folder-tree button span {
   overflow: hidden;
   flex: 1;
-  font-size: 0.73rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .folder-tree button small {
   color: var(--text-tertiary);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
 }
 
 .explorer-tags {
@@ -824,7 +824,7 @@ function openWikiLink(title: string) {
   border-radius: 999px;
   color: var(--text-secondary);
   background: var(--surface-elevated);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .explorer-tag-list button.is-active {
@@ -862,7 +862,7 @@ function openWikiLink(title: string) {
 
 .note-list__header span {
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .note-list__items {
@@ -925,12 +925,12 @@ function openWikiLink(title: string) {
 
 .note-list__body span {
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .note-list__body small {
   color: var(--text-tertiary);
-  font-size: 0.61rem;
+  font-size: 0.75rem;
 }
 
 .note-editor {
@@ -954,7 +954,7 @@ function openWikiLink(title: string) {
   align-items: center;
   gap: 0.32rem;
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .note-editor__status--error {
@@ -1018,13 +1018,13 @@ function openWikiLink(title: string) {
   outline: 0;
   color: var(--text-secondary);
   background: transparent;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .note-meta-fields > span {
   margin-left: auto;
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .note-editor__tags {
@@ -1156,7 +1156,7 @@ function openWikiLink(title: string) {
   padding: 0.35rem 0.75rem;
   border-top: 1px solid var(--border);
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .note-editor__tools {
@@ -1176,7 +1176,7 @@ function openWikiLink(title: string) {
   border-radius: 6px;
   color: var(--text-secondary);
   background: transparent;
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .note-editor__tools button:hover {
@@ -1200,7 +1200,7 @@ function openWikiLink(title: string) {
 
 .attachment-list__heading {
   margin-bottom: 0.35rem;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .attachment-row > button:first-child {
@@ -1218,7 +1218,7 @@ function openWikiLink(title: string) {
 
 .attachment-row span {
   overflow: hidden;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1227,7 +1227,7 @@ function openWikiLink(title: string) {
   overflow: hidden;
   margin-left: auto;
   color: var(--text-tertiary);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1263,13 +1263,13 @@ function openWikiLink(title: string) {
 
 .context-heading span {
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .note-context p {
   margin: 0;
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -1299,14 +1299,14 @@ function openWikiLink(title: string) {
 .context-list span {
   overflow: hidden;
   flex: 1;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .context-list small {
   color: var(--text-tertiary);
-  font-size: 0.58rem;
+  font-size: 0.75rem;
 }
 
 .context-list small.is-missing {
@@ -1340,12 +1340,12 @@ function openWikiLink(title: string) {
 }
 
 .linked-book strong {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .linked-book small {
   color: var(--text-tertiary);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
 }
 
 .context-tags {

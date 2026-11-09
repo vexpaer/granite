@@ -9,6 +9,7 @@ import {
 } from 'lucide-vue-next';
 import { useApp } from '../stores/app';
 import AppAvatarMenu from './AppAvatarMenu.vue';
+import PluginSlots from './PluginSlots.vue';
 
 const props = withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false });
 const app = useApp();
@@ -102,6 +103,10 @@ function selectShelf(id: string) {
           </div>
         </template>
       </nav>
+
+      <div class="app-sidebar__plugin-slot">
+        <PluginSlots slot="app.sidebar" />
+      </div>
 
       <div class="app-sidebar__spacer"></div>
       <div class="app-sidebar__account">
@@ -313,6 +318,17 @@ function selectShelf(id: string) {
 
 .app-sidebar__spacer {
   flex: 1;
+}
+
+.app-sidebar__plugin-slot {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.7rem;
+  color: var(--sidebar-text);
+}
+
+.app-sidebar__plugin-slot:empty {
+  display: none;
 }
 
 .app-sidebar__account {

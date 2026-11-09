@@ -38,7 +38,9 @@ const licenseRows = [
   { name: 'Tauri', version: '2', license: 'MIT / Apache-2.0', purpose: 'Windows 与 Android 原生宿主' },
   { name: 'Cordis', version: '3', license: 'MIT', purpose: '插件运行时' },
   { name: 'PDF.js', version: '5', license: 'Apache-2.0', purpose: 'PDF 渲染与文本层' },
-  { name: 'EPUB.js', version: '0.3', license: 'BSD-2-Clause', purpose: 'EPUB 阅读' },
+  { name: 'JSZip', version: '3.10', license: 'MIT / GPL-3.0-or-later', purpose: 'EPUB 包解析与插件包读取' },
+  { name: 'pdf-lib', version: '1.17', license: 'MIT', purpose: 'PDF 导出与文档处理' },
+  { name: '@lingo-reader/mobi-parser', version: '0.4', license: 'MIT', purpose: 'MOBI 解析' },
   { name: 'Lucide', version: '0.468', license: 'ISC', purpose: '界面图标' },
   { name: 'Marked', version: '16', license: 'MIT', purpose: 'Markdown 渲染' },
   { name: 'DOMPurify', version: '3.3', license: 'MPL-2.0 / Apache-2.0', purpose: 'Markdown 清理' },
@@ -46,12 +48,19 @@ const licenseRows = [
 
 const runtimeRows = computed(() => {
   const value = runtime.value || {};
+  const platform = [value.platform, value.runtime, value.architecture]
+    .filter(Boolean)
+    .join(' · ');
+  const platformDetail = value.apiLevel ? `${platform || 'Android'} · API ${value.apiLevel}` : platform;
   return [
-    { label: '应用版本', value: String(value.app_version || packageInfo.version) },
-    { label: '运行平台', value: [value.platform, value.architecture].filter(Boolean).join(' · ') || '读取中' },
-    { label: 'Tauri', value: String(value.tauri_version || '—') },
+    { label: '应用版本', value: String(value.appVersion || value.app_version || packageInfo.version) },
+    { label: '运行平台', value: platformDetail || '读取中' },
+    { label: 'Tauri', value: String(value.tauriVersion || value.tauri_version || '—') },
     { label: '原生宿主', value: value.native === true ? '已连接' : value.native === false ? '浏览器预览' : '读取中' },
-    { label: '数据存储', value: String(value.database || value.note || '读取中') },
+    {
+      label: '数据存储',
+      value: String(value.database || value.storageMode || value.storage_mode || value.note || '读取中'),
+    },
   ];
 });
 
@@ -403,14 +412,14 @@ onMounted(loadRuntime);
 .about-herald span {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .about-herald a {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-decoration: none;
 }
 
@@ -459,7 +468,7 @@ onMounted(loadRuntime);
   overflow: hidden;
   margin: 0.15rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -475,7 +484,7 @@ onMounted(loadRuntime);
   align-items: center;
   gap: 0.25rem;
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .runtime-list {
@@ -496,7 +505,7 @@ onMounted(loadRuntime);
 
 .runtime-list dt {
   color: var(--text-tertiary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .runtime-list dd {
@@ -504,7 +513,7 @@ onMounted(loadRuntime);
   margin: 0;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -517,7 +526,7 @@ onMounted(loadRuntime);
   border-radius: 10px;
   color: var(--danger);
   background: var(--danger-soft);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .state-list {
@@ -542,11 +551,11 @@ onMounted(loadRuntime);
   align-items: center;
   gap: 0.45rem;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .state-list strong {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   text-align: right;
 }
 
@@ -573,14 +582,14 @@ onMounted(loadRuntime);
 
 .issue-list strong {
   color: var(--text);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .issue-list p {
   overflow-wrap: anywhere;
   margin: 0.12rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .no-issues {
@@ -596,7 +605,7 @@ onMounted(loadRuntime);
 .no-issues p {
   margin: 0.15rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .license-list {
@@ -632,25 +641,25 @@ onMounted(loadRuntime);
 }
 
 .license-list strong {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .license-list small,
 .license-list > div > span:nth-child(3) {
   color: var(--text-secondary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .license-list code {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
 }
 
 .license-note {
   margin: 0.7rem 0 0;
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -678,7 +687,7 @@ onMounted(loadRuntime);
   max-width: 88ch;
   margin: 0.2rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -700,7 +709,7 @@ onMounted(loadRuntime);
   align-items: flex-start;
   gap: 0.5rem;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 

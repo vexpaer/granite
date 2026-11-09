@@ -20,6 +20,7 @@ import BookListItem from '../components/BookListItem.vue';
 import DialogPanel from '../components/DialogPanel.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
+import PluginSlots from '../components/PluginSlots.vue';
 import type { Book, Format } from '../types';
 
 const app = useApp();
@@ -546,6 +547,10 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <div class="library-plugin-toolbar">
+      <PluginSlots slot="library.toolbar" />
+    </div>
+
     <div v-if="selectionMode" class="selection-toolbar surface-card">
       <div class="selection-toolbar__summary">
         <button class="icon-button" type="button" aria-label="退出批量选择" @click="exitSelectionMode"><X :size="17" /></button>
@@ -771,6 +776,16 @@ onBeforeUnmount(() => {
   padding: 1rem;
 }
 
+.library-plugin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.library-plugin-toolbar:empty {
+  display: none;
+}
+
 .library-toolbar__top {
   display: flex;
   align-items: center;
@@ -831,7 +846,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   color: var(--accent-contrast);
   background: var(--accent);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .sort-select {
@@ -870,7 +885,7 @@ onBeforeUnmount(() => {
 
 .status-tabs button span {
   color: var(--text-tertiary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .status-tabs button.is-active {
@@ -908,7 +923,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   color: var(--text-secondary);
   background: var(--surface-elevated);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .filter-chip span {
@@ -925,7 +940,7 @@ onBeforeUnmount(() => {
 }
 
 .filter-empty {
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .advanced-filters__grid {
@@ -946,7 +961,7 @@ onBeforeUnmount(() => {
   border: 0;
   color: var(--accent-strong);
   background: transparent;
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 .advanced-filters__footer {
@@ -985,7 +1000,7 @@ onBeforeUnmount(() => {
   border: 0;
   color: var(--accent-strong);
   background: transparent;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 
@@ -993,7 +1008,7 @@ onBeforeUnmount(() => {
   width: auto;
   min-height: 33px;
   padding-block: 0.3rem;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .library-results-heading {
@@ -1123,12 +1138,12 @@ onBeforeUnmount(() => {
 }
 
 .collection-manager-list strong {
-  font-size: 0.73rem;
+  font-size: 0.75rem;
 }
 
 .collection-manager-list small {
   color: var(--text-secondary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .collection-manager-empty {
@@ -1140,7 +1155,7 @@ onBeforeUnmount(() => {
   border-radius: 11px;
   margin-top: 0.75rem;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 

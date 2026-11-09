@@ -152,7 +152,7 @@ async function favorite(bookId: string) {
 
 .result-heading span {
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .tag-book-grid {
@@ -208,7 +208,7 @@ async function favorite(bookId: string) {
 .tag-note-list small,
 .tag-note-list time {
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 580px) {

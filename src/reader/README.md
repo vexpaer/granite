@@ -70,7 +70,9 @@ physical-device checks.
 npm test -- --run src/reader/formats.fixtures.test.ts src/reader/pdf-annotations.test.ts
 ```
 
-The format test uses the original generated EPUB/PDF/TXT fixtures and an actual
-public-domain MOBI sample from the MIT parser repository. The annotation test
+The format test uses the original generated EPUB/PDF/TXT fixtures and the
+configured MOBI fixture. The MOBI fixture's content provenance is recorded
+separately in `src/reader/__fixtures__/README.md`; the parser library's code
+license is not treated as a license for ebook content. The annotation test
 round-trips all four required Granite PDF annotation types and verifies
 replacement by Granite ID.

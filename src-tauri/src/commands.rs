@@ -72,7 +72,7 @@ pub async fn host_call(
 
 async fn dispatch(app: &AppHandle, state: &HostState, request: HostRequest) -> HostResult<Value> {
     #[cfg(target_os = "android")]
-    if is_android_managed_operation(&request.op) {
+    if android_should_dispatch(&request.op, &request.args) {
         use tauri_plugin_android_bridge::{AndroidBridgeExt, HostCallRequest};
 
         return app
@@ -140,30 +140,34 @@ async fn dispatch(app: &AppHandle, state: &HostState, request: HostRequest) -> H
             let bytes = args.bytes("bytes")?;
             save_export_dialog(app, filename, &bytes, "Export Granite backup")
         }
+        "plugin.fetch" => {
+            let url = args.string("url")?;
+            let max_bytes = args.value("maxBytes")?.as_u64().ok_or_else(|| {
+                HostError::InvalidArgs("'maxBytes' must be a positive integer".into())
+            })?;
+            let bytes = network::fetch_plugin_archive(url, max_bytes).await?;
+            Ok(json!({ "bytes": bytes }))
+        }
         "diagnostics" => diagnostics(state),
-        "share.consume" => Err(HostError::Unsupported(
-            "share.consume is available only through the Android native bridge".into(),
-        )),
+        "share.consume" | "share.ack" => Err(HostError::Unsupported(format!(
+            "{} is available only through the Android native bridge",
+            request.op
+        ))),
         other => Err(HostError::Unsupported(format!(
             "unknown host operation '{other}'"
         ))),
     }
 }
 
-#[cfg(target_os = "android")]
-fn is_android_managed_operation(op: &str) -> bool {
-    matches!(
+#[cfg(any(target_os = "android", test))]
+fn android_should_dispatch(op: &str, args: &Value) -> bool {
+    if matches!(
         op,
-        "root.pick"
-            | "root.scan"
-            | "root.validate"
+        "root.default"
+            | "root.pick"
             | "root.migrate"
             | "root.migrateCancel"
-            | "book.import"
-            | "book.read"
-            | "book.write"
             | "book.export"
-            | "book.locate"
             | "file.pickBooks"
             | "credential.set"
             | "credential.delete"
@@ -172,7 +176,23 @@ fn is_android_managed_operation(op: &str) -> bool {
             | "lifecycle.immersive"
             | "lifecycle.back"
             | "share.consume"
-    )
+            | "share.ack"
+    ) {
+        return true;
+    }
+
+    if matches!(
+        op,
+        "root.scan" | "root.validate" | "book.import" | "book.read" | "book.write" | "book.locate"
+    ) {
+        return args
+            .get("root")
+            .and_then(|root| root.get("kind"))
+            .and_then(Value::as_str)
+            == Some("saf");
+    }
+
+    false
 }
 
 async fn state_load(app: &AppHandle, state: &HostState) -> HostResult<Value> {
@@ -649,5 +669,23 @@ mod tests {
             "Granite backup.gra"
         );
         assert!(export_filename("").is_err());
+    }
+
+    #[test]
+    fn android_dispatches_default_picker_and_saf_roots_to_native_bridge() {
+        assert!(android_should_dispatch("root.default", &json!({})));
+        assert!(android_should_dispatch("file.pickBooks", &json!({})));
+        assert!(android_should_dispatch(
+            "share.ack",
+            &json!({"ids": ["share-1"]})
+        ));
+        assert!(android_should_dispatch(
+            "book.read",
+            &json!({"root": {"kind": "saf"}})
+        ));
+        assert!(!android_should_dispatch(
+            "book.read",
+            &json!({"root": {"kind": "filesystem"}})
+        ));
     }
 }

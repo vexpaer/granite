@@ -370,7 +370,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 .conflict-summary p {
   margin: 0.15rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .conflict-summary__safe {
@@ -378,7 +378,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   align-items: center;
   gap: 0.3rem;
   color: var(--success);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .conflict-workbench {
@@ -454,7 +454,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 
 .conflict-list__copy small {
   color: var(--text-tertiary);
-  font-size: 0.61rem;
+  font-size: 0.75rem;
 }
 
 .conflict-list button > svg {
@@ -483,7 +483,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   border-radius: 999px;
   color: var(--warning);
   background: color-mix(in srgb, var(--warning) 10%, var(--surface-elevated));
-  font-size: 0.63rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -497,7 +497,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 .conflict-review__header p {
   margin: 0.25rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .conflict-review__header code {
@@ -512,7 +512,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   padding: 0.7rem 1.2rem;
   color: var(--success);
   background: color-mix(in srgb, var(--success) 8%, var(--surface-elevated));
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .field-differences {
@@ -531,7 +531,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 .difference-head {
   color: var(--text-secondary);
   background: var(--surface-muted);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -561,7 +561,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   color: var(--accent-strong);
   background: var(--accent-wash);
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .difference-row pre {
@@ -569,7 +569,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   max-height: 120px;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -577,7 +577,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 .difference-empty {
   padding: 0.8rem;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .version-columns {
@@ -601,7 +601,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   gap: 0.35rem;
   margin: 0 0 0.55rem;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .version-columns pre {
@@ -613,7 +613,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
   color: var(--text-secondary);
   background: var(--surface-muted);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -640,7 +640,7 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 .resolution-actions p {
   margin: 0.15rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -674,13 +674,13 @@ async function resolve(choice: 'local' | 'remote' | 'both') {
 }
 
 .conflict-rules strong {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .conflict-rules p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 

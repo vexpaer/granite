@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  ControlledUiRegistry,
   createPluginRuntime,
+  PermissionBroker,
   validateManifest,
   verifyBundleIntegrity,
   webCryptoDigest,
@@ -63,6 +65,10 @@ describe('plugin manifest validation', () => {
         integrity: 'abcdef',
         trust: 'trusted',
         ui: { kind: 'iframe' },
+        source: {
+          kind: 'url',
+          uri: 'https://user:secret@plugins.example.test/package.zip',
+        },
       }),
     )
 
@@ -73,6 +79,7 @@ describe('plugin manifest validation', () => {
         'permission',
         'integrity',
         'trusted-ui',
+        'source-credentials',
       ]),
     )
   })
@@ -126,6 +133,31 @@ describe('plugin manifest validation', () => {
 })
 
 describe('Cordis plugin lifecycle and fault isolation', () => {
+  it('rejects raw HTML elements and unsafe UI props', () => {
+    const registry = new ControlledUiRegistry()
+    const permissions = new PermissionBroker('safe.plugin', ['ui.register'])
+
+    expect(() =>
+      registry.register('safe.plugin', permissions, {
+        id: 'safe.plugin:settings',
+        type: 'settings',
+        slot: 'settings.pages',
+        title: 'Settings',
+        component: 'iframe',
+      }),
+    ).toThrow('Vue component')
+    expect(() =>
+      registry.register('safe.plugin', permissions, {
+        id: 'safe.plugin:settings',
+        type: 'settings',
+        slot: 'settings.pages',
+        title: 'Settings',
+        component: {},
+        props: { innerHTML: '<script>alert(1)</script>' },
+      }),
+    ).toThrow('raw HTML')
+  })
+
   it('runs a trusted ESM module, reverses registrations, and namespaces events', async () => {
     const bundle = 'trusted bundle'
     const integrity = await integrityFor(bundle)

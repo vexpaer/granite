@@ -110,7 +110,7 @@ img {
   overflow: hidden;
   max-width: 100%;
   opacity: 0.78;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -118,7 +118,7 @@ img {
 .book-cover__fallback small {
   margin-top: auto;
   opacity: 0.7;
-  font-size: 0.6rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.16em;
 }
@@ -165,7 +165,7 @@ img {
   border-radius: 999px;
   color: #fff;
   background: rgba(52, 39, 51, 0.82);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
 }
 </style>
 

@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+} from 'vue';
 import {
   AlertTriangle,
+  ArrowUpRight,
   Boxes,
   CheckCircle2,
   Code2,
@@ -14,26 +22,36 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
+  Undo2,
 } from 'lucide-vue-next';
 import { useApp } from '../stores/app';
 import DialogPanel from '../components/DialogPanel.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import type { InstalledPlugin } from '../types';
+import type { PluginUiEntry } from '../services/plugin-manager';
 
 const app = useApp();
 const fileInput = ref<HTMLInputElement>();
 const candidateFile = ref<File | null>(null);
 const candidateManifest = ref<Record<string, unknown> | null>(null);
+const candidateOrigin = ref<'local' | 'remote'>('local');
 const reviewOpen = ref(false);
 const permissionAccepted = ref(false);
 const installing = ref(false);
+const installError = ref('');
+const remoteSourceUrl = ref('');
+const stagingRemoteSource = ref(false);
+const remoteSourceError = ref('');
 const enableTarget = ref<InstalledPlugin | null>(null);
 const enableAccepted = ref(false);
 const expandedPlugin = ref('');
 const uninstallTarget = ref<InstalledPlugin | null>(null);
+const rollbackTarget = ref<InstalledPlugin | null>(null);
 const revokeTarget = ref<{ plugin: InstalledPlugin; permission: string } | null>(null);
 const changingSafeMode = ref(false);
+const uiEntries = shallowRef<PluginUiEntry[]>([]);
+let stopUiEntryWatch: (() => void) | undefined;
 
 const permissionDescriptions: Record<string, string> = {
   'reader.observe': '观察阅读位置、活动状态和选中文字。',
@@ -64,6 +82,15 @@ const candidateDependencies = computed(() => {
 });
 const enablePermissions = computed(() => enableTarget.value?.permissions || []);
 const safeMode = computed(() => app.settings.layout.safeMode === true);
+const pluginPages = computed(() =>
+  uiEntries.value
+    .filter(
+      (entry) =>
+        entry.type === 'page' &&
+        app.plugins.some((plugin) => plugin.id === entry.pluginId && plugin.enabled),
+    )
+    .sort((left, right) => (left.order || 0) - (right.order || 0) || left.title.localeCompare(right.title, 'zh-CN')),
+);
 
 function describePermission(permission: string) {
   return permissionDescriptions[permission] || `插件声明的能力：${permission}`;
@@ -76,30 +103,78 @@ function manifestValue(key: string) {
   return value ? String(value) : '未声明';
 }
 
+function contributionRouteId(entry: PluginUiEntry) {
+  const colonPrefix = `${entry.pluginId}:`;
+  const slashPrefix = `${entry.pluginId}/`;
+  if (entry.id.startsWith(colonPrefix)) return entry.id.slice(colonPrefix.length);
+  if (entry.id.startsWith(slashPrefix)) return entry.id.slice(slashPrefix.length);
+  return entry.id;
+}
+
+function pluginPageRoute(entry: PluginUiEntry) {
+  return `plugin:${entry.pluginId}/${contributionRouteId(entry)}`;
+}
+
+function resetCandidate() {
+  reviewOpen.value = false;
+  candidateFile.value = null;
+  candidateManifest.value = null;
+  candidateOrigin.value = 'local';
+  permissionAccepted.value = false;
+  installError.value = '';
+}
+
 async function inspectFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
   candidateFile.value = file;
+  candidateOrigin.value = 'local';
+  installError.value = '';
   try {
     candidateManifest.value = await app.previewPlugin(file);
     permissionAccepted.value = false;
     reviewOpen.value = true;
   } catch (error) {
     app.error = error instanceof Error ? error.message : String(error);
+    resetCandidate();
   } finally {
     input.value = '';
+  }
+}
+
+async function stageRemoteSource() {
+  const url = remoteSourceUrl.value.trim();
+  if (!url) return;
+  remoteSourceError.value = '';
+  installError.value = '';
+  stagingRemoteSource.value = true;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') throw new Error('插件来源必须使用 HTTPS。');
+    const staged = await app.stagePluginSource(parsed.toString());
+    candidateFile.value = staged.file;
+    candidateManifest.value = staged.manifest;
+    candidateOrigin.value = 'remote';
+    permissionAccepted.value = false;
+    reviewOpen.value = true;
+  } catch (error) {
+    remoteSourceError.value = error instanceof Error ? error.message : String(error);
+    app.error = remoteSourceError.value;
+  } finally {
+    stagingRemoteSource.value = false;
   }
 }
 
 async function installCandidate() {
   if (!candidateFile.value || !permissionAccepted.value) return;
   installing.value = true;
+  installError.value = '';
   try {
     await app.installPlugin(candidateFile.value);
-    reviewOpen.value = false;
-    candidateFile.value = null;
-    candidateManifest.value = null;
+    resetCandidate();
+  } catch (error) {
+    installError.value = error instanceof Error ? error.message : String(error);
   } finally {
     installing.value = false;
   }
@@ -124,6 +199,17 @@ async function confirmUninstall() {
   if (!uninstallTarget.value) return;
   await app.uninstallPlugin(uninstallTarget.value.id);
   uninstallTarget.value = null;
+}
+
+async function confirmRollback() {
+  if (!rollbackTarget.value) return;
+  try {
+    await app.rollbackPlugin(rollbackTarget.value.id);
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    rollbackTarget.value = null;
+  }
 }
 
 async function confirmRevoke() {
@@ -158,6 +244,27 @@ async function toggleSafeMode(enabled: boolean) {
 function toggleExpanded(id: string) {
   expandedPlugin.value = expandedPlugin.value === id ? '' : id;
 }
+
+onMounted(async () => {
+  try {
+    const manager = await import('../services/plugin-manager');
+    const syncEntries = () => {
+      uiEntries.value = manager.pluginUiContributions.map((entry) => ({ ...entry }));
+    };
+    syncEntries();
+    stopUiEntryWatch = watch(
+      () => manager.pluginUiContributions.slice(),
+      syncEntries,
+      { deep: false },
+    );
+  } catch (error) {
+    app.notify(`插件扩展目录读取失败：${String(error)}`);
+  }
+});
+
+onBeforeUnmount(() => {
+  stopUiEntryWatch?.();
+});
 </script>
 
 <template>
@@ -184,6 +291,31 @@ function toggleExpanded(id: string) {
       </article>
     </section>
 
+    <form class="remote-install-card surface-card" @submit.prevent="stageRemoteSource">
+      <ExternalLink :size="25" />
+      <div class="remote-install-card__main">
+        <h2>从 HTTPS 地址安装</h2>
+        <p>只下载你明确输入的地址。Granite 会先验证主机、大小、清单、SRI 完整性和兼容性，再打开同一份权限审查。</p>
+        <label class="form-field">
+          <span class="sr-only">插件包 HTTPS 地址</span>
+          <input
+            v-model="remoteSourceUrl"
+            class="field"
+            type="url"
+            inputmode="url"
+            autocomplete="off"
+            placeholder="https://example.com/plugin.granite"
+          />
+        </label>
+        <p v-if="remoteSourceError" class="remote-source-error" role="alert">
+          <AlertTriangle :size="14" />{{ remoteSourceError }}
+        </p>
+      </div>
+      <button class="button button--secondary" type="submit" :disabled="stagingRemoteSource || !remoteSourceUrl.trim()">
+        {{ stagingRemoteSource ? '正在获取并校验' : '获取并审查' }}
+      </button>
+    </form>
+
     <section class="local-install-card surface-card">
       <FileArchive :size="25" />
       <div>
@@ -191,6 +323,31 @@ function toggleExpanded(id: string) {
         <p>支持包含 manifest.json 与预构建 ESM Bundle 的 ZIP。第三方来源不会被视为官方认证；Granite 会在写入前校验包结构和声明完整性。</p>
       </div>
       <button class="button button--secondary" type="button" @click="fileInput?.click()">选择插件包</button>
+    </section>
+
+    <section class="surface-card section-card plugin-pages-card">
+      <div class="section-heading">
+        <h2>插件页面</h2>
+        <span class="muted">{{ pluginPages.length }} 个入口</span>
+      </div>
+      <div v-if="pluginPages.length" class="plugin-page-list">
+        <button
+          v-for="entry in pluginPages"
+          :key="entry.id"
+          type="button"
+          @click="app.navigate(pluginPageRoute(entry))"
+        >
+          <span class="plugin-page-list__icon"><Code2 :size="17" /></span>
+          <span>
+            <strong>{{ entry.title }}</strong>
+            <small>{{ entry.pluginId }}</small>
+          </span>
+          <ArrowUpRight :size="16" />
+        </button>
+      </div>
+      <div v-else class="plugin-pages-empty">
+        启用声明了页面的插件后，入口会显示在这里。插件页面不会占用四个核心导航项。
+      </div>
     </section>
 
     <section class="surface-card section-card plugin-list-card">
@@ -237,6 +394,14 @@ function toggleExpanded(id: string) {
                 </li>
               </ul>
               <a v-if="plugin.manifest?.repository" :href="String(plugin.manifest.repository)" target="_blank" rel="noreferrer noopener"><ExternalLink :size="13" />打开插件来源</a>
+              <button
+                v-if="app.pluginData[`backup:${plugin.id}`]"
+                class="plugin-rollback"
+                type="button"
+                @click="rollbackTarget = plugin"
+              >
+                <Undo2 :size="13" />恢复上一版本
+              </button>
               <button class="plugin-uninstall" type="button" @click="uninstallTarget = plugin">
                 <Trash2 :size="13" />卸载插件
               </button>
@@ -291,7 +456,7 @@ function toggleExpanded(id: string) {
       title="审查并安装插件"
       description="安装后会保持禁用；启用前仍需确认权限。"
       width="large"
-      @close="reviewOpen = false"
+      @close="resetCandidate"
     >
       <div class="manifest-review">
         <div class="manifest-review__herald">
@@ -299,7 +464,7 @@ function toggleExpanded(id: string) {
           <div><strong>{{ String(candidateManifest.name || '未命名插件') }}</strong><span>v{{ String(candidateManifest.version || '?') }} · {{ candidateFile?.name }}</span></div>
         </div>
         <dl>
-          <div><dt>来源文件</dt><dd>{{ candidateFile?.name }}</dd></div>
+          <div><dt>来源</dt><dd>{{ candidateOrigin === 'remote' ? manifestValue('source') : candidateFile?.name }}</dd></div>
           <div><dt>文件大小</dt><dd>{{ candidateFile ? `${Math.ceil(candidateFile.size / 1024)} KB` : '—' }}</dd></div>
           <div><dt>作者</dt><dd>{{ manifestValue('author') }}</dd></div>
           <div><dt>许可证</dt><dd>{{ manifestValue('license') }}</dd></div>
@@ -326,9 +491,12 @@ function toggleExpanded(id: string) {
           <input v-model="permissionAccepted" type="checkbox" />
           <span>我已核对插件来源、许可证、完整性与上述权限，并理解第三方插件代码可能访问其获准的能力。</span>
         </label>
+        <div v-if="installError" class="plugin-install-error" role="alert">
+          <AlertTriangle :size="16" />{{ installError }}
+        </div>
       </div>
       <template #footer>
-        <button class="button button--ghost" type="button" @click="reviewOpen = false">取消</button>
+        <button class="button button--ghost" type="button" @click="resetCandidate">取消</button>
         <button class="button button--primary" type="button" :disabled="!permissionAccepted || installing" @click="installCandidate">
           {{ installing ? '安装中' : '确认并安装（默认禁用）' }}
         </button>
@@ -393,6 +561,23 @@ function toggleExpanded(id: string) {
         <button class="button button--danger" type="button" @click="confirmUninstall">卸载并保留数据</button>
       </template>
     </DialogPanel>
+
+    <DialogPanel
+      v-if="rollbackTarget"
+      :title="`恢复 ${rollbackTarget.name} 的上一版本？`"
+      description="当前插件会先停用，再恢复本机保存的上一版本。插件命名空间数据保持不变，恢复后的版本默认禁用。"
+      width="small"
+      @close="rollbackTarget = null"
+    >
+      <div class="uninstall-summary">
+        <Undo2 :size="18" />
+        <span>当前 v{{ rollbackTarget.version }} · 恢复后可重新审查权限再启用</span>
+      </div>
+      <template #footer>
+        <button class="button button--ghost" type="button" @click="rollbackTarget = null">取消</button>
+        <button class="button button--secondary" type="button" @click="confirmRollback">恢复上一版本</button>
+      </template>
+    </DialogPanel>
   </div>
 </template>
 
@@ -424,7 +609,7 @@ function toggleExpanded(id: string) {
 .plugin-summary article > span {
   display: grid;
   gap: 0.1rem;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .plugin-summary strong {
@@ -432,6 +617,7 @@ function toggleExpanded(id: string) {
   font-size: 0.82rem;
 }
 
+.remote-install-card,
 .local-install-card {
   display: flex;
   align-items: center;
@@ -440,27 +626,116 @@ function toggleExpanded(id: string) {
   border-style: dashed;
 }
 
+.remote-install-card > svg,
 .local-install-card > svg {
   flex: 0 0 auto;
   color: var(--accent);
 }
 
+.remote-install-card__main,
 .local-install-card div {
   min-width: 0;
   flex: 1;
 }
 
+.remote-install-card h2,
 .local-install-card h2 {
   margin: 0;
   font-size: 0.85rem;
 }
 
+.remote-install-card p,
 .local-install-card p {
   max-width: 90ch;
   margin: 0.2rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
+}
+
+.remote-install-card .form-field {
+  margin-top: 0.7rem;
+}
+
+.remote-source-error,
+.plugin-install-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.55rem;
+  border-radius: 8px;
+  color: var(--danger) !important;
+  background: var(--danger-soft);
+}
+
+.plugin-pages-card {
+  min-height: 0;
+}
+
+.plugin-page-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.plugin-page-list button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text);
+  background: var(--surface-elevated);
+  text-align: left;
+}
+
+.plugin-page-list button:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--accent-wash);
+}
+
+.plugin-page-list__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.plugin-page-list button > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.plugin-page-list strong,
+.plugin-page-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-page-list strong {
+  font-size: 0.78rem;
+}
+
+.plugin-page-list small {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.plugin-page-list button > svg {
+  color: var(--text-tertiary);
+}
+
+.plugin-pages-empty {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.6;
 }
 
 .plugin-list-card {
@@ -520,7 +795,7 @@ function toggleExpanded(id: string) {
 
 .plugin-card__title > span:not(.plugin-state) {
   color: var(--text-tertiary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .plugin-state {
@@ -531,7 +806,7 @@ function toggleExpanded(id: string) {
   border-radius: 999px;
   color: var(--text-tertiary);
   background: var(--surface-muted);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
 }
 
 .plugin-state--enabled {
@@ -542,7 +817,7 @@ function toggleExpanded(id: string) {
 .plugin-card__main > p {
   margin: 0.25rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .plugin-card__meta {
@@ -552,7 +827,7 @@ function toggleExpanded(id: string) {
   gap: 0.55rem;
   margin-top: 0.45rem;
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .plugin-card__meta button,
@@ -564,7 +839,7 @@ function toggleExpanded(id: string) {
   border: 0;
   color: var(--accent-strong);
   background: transparent;
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   text-decoration: none;
 }
 
@@ -577,7 +852,7 @@ function toggleExpanded(id: string) {
   margin-top: 0.5rem;
   color: var(--danger);
   background: var(--danger-soft);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .plugin-details {
@@ -604,13 +879,13 @@ function toggleExpanded(id: string) {
 
 .plugin-details dt {
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .plugin-details dd {
   overflow: hidden;
   margin: 0;
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -630,7 +905,7 @@ function toggleExpanded(id: string) {
   align-items: flex-start;
   gap: 0.45rem;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .permission-revoke {
@@ -640,7 +915,7 @@ function toggleExpanded(id: string) {
   border-radius: 6px;
   color: var(--danger);
   background: var(--danger-soft);
-  font-size: 0.62rem;
+  font-size: 0.75rem;
 }
 
 .plugin-uninstall {
@@ -652,7 +927,19 @@ function toggleExpanded(id: string) {
   border: 0;
   color: var(--danger);
   background: transparent;
-  font-size: 0.64rem;
+  font-size: 0.75rem;
+}
+
+.plugin-rollback {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0;
+  border: 0;
+  color: var(--accent-strong);
+  background: transparent;
+  font-size: 0.75rem;
 }
 
 .plugin-details li > span,
@@ -664,7 +951,7 @@ function toggleExpanded(id: string) {
 code {
   color: var(--accent-strong);
   font-family: var(--font-mono);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 .switch-control {
@@ -728,7 +1015,7 @@ code {
 
 .permission-principles p {
   margin: 0.2rem 0 0;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -768,7 +1055,7 @@ code {
   max-width: 86ch;
   margin: 0.16rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -821,7 +1108,7 @@ code {
 
 .safe-mode-switch small {
   color: var(--text-tertiary);
-  font-size: 0.58rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
@@ -858,13 +1145,13 @@ code {
 
 .permission-revoke-summary small {
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .revoke-note {
   margin: 0.7rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .manifest-review__herald > svg {
@@ -878,7 +1165,7 @@ code {
 .manifest-review__herald span,
 .enable-plugin-summary span {
   color: var(--text-secondary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .manifest-review dl {
@@ -898,13 +1185,13 @@ code {
 
 .manifest-review dt {
   color: var(--text-tertiary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .manifest-review dd {
   overflow: hidden;
   margin: 0;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -917,7 +1204,7 @@ code {
 .manifest-review section p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .dependency-list {
@@ -930,7 +1217,7 @@ code {
   padding: 0.3rem 0.5rem;
   border-radius: 7px;
   background: var(--surface-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .permission-list {
@@ -941,7 +1228,7 @@ code {
 
 .permission-list small {
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -954,7 +1241,7 @@ code {
   border-radius: 11px;
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--warning) 7%, var(--surface-elevated));
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -964,6 +1251,12 @@ code {
   flex: 0 0 auto;
   margin-top: 0.15rem;
   accent-color: var(--accent);
+}
+
+.plugin-install-error {
+  margin-top: 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.55;
 }
 
 .enable-plugin-summary {
@@ -981,6 +1274,12 @@ code {
     flex-wrap: wrap;
   }
 
+  .remote-install-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .remote-install-card .button,
   .local-install-card .button {
     width: 100%;
   }

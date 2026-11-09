@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-const androidRoot = "src-tauri/gen/android";
+const androidRoot = resolve(process.env.ANDROID_PROJECT_ROOT ?? "src-tauri/gen/android");
 const appRoot = join(androidRoot, "app");
 const gradlePath = join(appRoot, "build.gradle.kts");
 const keystorePath = join(appRoot, "granite-release.jks");
@@ -48,7 +48,7 @@ const properties = [
 writeFileSync(propertiesPath, properties, { mode: 0o600 });
 chmodSync(propertiesPath, 0o600);
 
-let gradle = readFileSync(gradlePath, "utf8");
+let gradle = readFileSync(gradlePath, "utf8").replaceAll("\r\n", "\n");
 if (!gradle.includes("graniteKeystoreProperties")) {
   const marker = [
     "val tauriProperties = Properties().apply {",

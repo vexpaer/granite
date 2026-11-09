@@ -232,7 +232,7 @@ onMounted(() => {
 .search-summary > span {
   overflow: hidden;
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -261,7 +261,7 @@ onMounted(() => {
 
 .search-group__heading span {
   color: var(--text-tertiary);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .search-group > div:last-child {
@@ -323,7 +323,7 @@ onMounted(() => {
 .search-result__copy span,
 .search-result__meta {
   color: var(--text-secondary);
-  font-size: 0.67rem;
+  font-size: 0.75rem;
 }
 
 .search-result__meta {
@@ -360,7 +360,7 @@ onMounted(() => {
 
 .search-tag-grid small {
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .search-idle {

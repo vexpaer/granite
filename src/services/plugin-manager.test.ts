@@ -198,6 +198,36 @@ describe('Granite plugin manager', () => {
     await expect(deactivateInstalled(plugin.id)).resolves.toBe(true)
   })
 
+  it('delivers only the owning plugin namespace to an untrusted sandbox', async () => {
+    const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'])
+    let forwardEvent:
+      | ((name: string, payload: unknown) => void)
+      | undefined
+    await activateInstalled(plugin, {
+      events: {
+        emit: () => undefined,
+        onAny: (listener) => {
+          forwardEvent = listener
+          return () => undefined
+        },
+      },
+    })
+    const worker = FakeWorker.instances[0]!
+
+    forwardEvent?.('plugin:manager.example/own-event', { allowed: true })
+    forwardEvent?.('plugin:other.example/private-event', { secret: 'not-for-you' })
+    forwardEvent?.('library.private-event', { secret: 'app-only' })
+
+    expect(worker.posted.filter((message) => message.type === 'host-event')).toEqual([
+      {
+        type: 'host-event',
+        event: 'plugin:manager.example/own-event',
+        payload: { allowed: true },
+        token: expect.any(String),
+      },
+    ])
+  })
+
   it('bounds teardown when a worker never acknowledges deactivation', async () => {
     FakeWorker.acknowledgeDeactivate = false
     const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'])

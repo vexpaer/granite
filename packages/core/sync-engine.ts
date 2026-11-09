@@ -20,6 +20,7 @@ import type {
   ProviderWriteResult,
   StorageProvider,
 } from './provider'
+import { ProviderError } from './provider'
 
 export const SYNC_ROOT = 'sync'
 export const SYNC_DEVICE_PREFIX = `${SYNC_ROOT}/devices/`
@@ -187,19 +188,52 @@ export class SyncEngine {
 
   async ensureProtocolDocument(options: ObjectOperationOptions = {}): Promise<void> {
     const existing = await this.provider.stat(SYNC_PROTOCOL_KEY, options)
-    if (existing) return
+    if (existing) {
+      await this.assertProtocolDocument(options)
+      return
+    }
     const bytes = new TextEncoder().encode(
       JSON.stringify({
         protocolVersion: SYNC_PROTOCOL_VERSION,
         minimumReaderVersion: '1.0.0',
       }),
     )
-    await this.provider.write(SYNC_PROTOCOL_KEY, bytes, {
-      contentType: 'application/json',
-      digest: this.digest,
-      signal: options.signal,
-      ifNoneMatch: '*',
-    })
+    try {
+      await this.provider.write(SYNC_PROTOCOL_KEY, bytes, {
+        contentType: 'application/json',
+        digest: this.digest,
+        signal: options.signal,
+        ifNoneMatch: '*',
+      })
+    } catch (error) {
+      if (
+        error instanceof ProviderError &&
+        (error.status === 409 || error.status === 412)
+      ) {
+        await this.assertProtocolDocument(options)
+        return
+      }
+      throw error
+    }
+  }
+
+  private async assertProtocolDocument(
+    options: ObjectOperationOptions,
+  ): Promise<void> {
+    const bytes = await this.provider.read(SYNC_PROTOCOL_KEY, options)
+    let protocolVersion: unknown
+    try {
+      protocolVersion = (JSON.parse(new TextDecoder().decode(bytes)) as {
+        protocolVersion?: unknown
+      }).protocolVersion
+    } catch {
+      throw new Error('remote sync protocol document is not valid JSON')
+    }
+    if (protocolVersion !== SYNC_PROTOCOL_VERSION) {
+      throw new Error(
+        `remote sync protocol ${String(protocolVersion)} is incompatible with ${SYNC_PROTOCOL_VERSION}`,
+      )
+    }
   }
 
   async pull(options: ObjectOperationOptions = {}): Promise<PullSyncResult> {

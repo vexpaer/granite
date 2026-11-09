@@ -7,9 +7,11 @@ output_dir="artifacts/android/${mode}"
 mkdir -p "$output_dir"
 
 apk_root="src-tauri/gen/android/app/build/outputs/apk"
-mapfile -d '' apks < <(find "$apk_root" -type f -name '*.apk' -print0 | sort -z)
+mapfile -d '' apks < <(
+  find "$apk_root" -type f -path "*/${mode}/*" -name '*.apk' -print0 | sort -z
+)
 if [[ "${#apks[@]}" -eq 0 ]]; then
-  echo "No APK found under $apk_root" >&2
+  echo "No ${mode} APK found under $apk_root" >&2
   exit 1
 fi
 
@@ -35,7 +37,19 @@ fi
 : > "$output_dir/apk-inspection.txt"
 sha256sum "${apks[@]}" > "$output_dir/SHA256SUMS"
 
-for apk in "${apks[@]}"; do
+for index in "${!apks[@]}"; do
+  apk="${apks[$index]}"
+  manifest_dump="$output_dir/apk-${index}-manifest.txt"
+  "$aapt" dump xmltree "$apk" AndroidManifest.xml > "$manifest_dump"
+  for required in \
+    "android.intent.action.SEND" \
+    "android.intent.action.SEND_MULTIPLE" \
+    "android:enableOnBackInvokedCallback"; do
+    if ! grep -Fq "$required" "$manifest_dump"; then
+      echo "APK manifest is missing $required: $apk" >&2
+      exit 1
+    fi
+  done
   {
     echo "APK: $apk"
     "$aapt" dump badging "$apk" | sed -n '1,12p'

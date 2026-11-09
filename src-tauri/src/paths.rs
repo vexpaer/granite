@@ -309,13 +309,14 @@ pub fn format_from_path(path: &Path) -> Option<&'static str> {
 }
 
 pub fn sanitize_filename(value: &str) -> HostResult<String> {
-    let name = Path::new(value)
-        .file_name()
-        .and_then(|name| name.to_str())
+    let name = value
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty() && !name.contains('\0'))
         .ok_or_else(|| HostError::InvalidArgs("file name is missing or invalid".into()))?;
-    if name.contains(['/', '\\', '\0']) {
+    if name == "." || name == ".." {
         return Err(HostError::Forbidden(
-            "file name contains a path separator or NUL".into(),
+            "file name is a reserved path component".into(),
         ));
     }
     let safe = sanitize_component(name)?;
@@ -422,9 +423,14 @@ mod tests {
             "A_B_.epub"
         );
         assert_eq!(
+            sanitize_filename("C:\\fakepath\\A:B?.epub").expect("sanitize full filename"),
+            "A_B_.epub"
+        );
+        assert_eq!(
             sanitize_component("CON.txt").expect("sanitize component"),
             "_CON.txt"
         );
+        assert!(sanitize_filename("../").is_err());
         assert!(sanitize_filename("book.azw3").is_err());
     }
 

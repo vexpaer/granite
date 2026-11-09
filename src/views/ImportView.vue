@@ -256,7 +256,7 @@ function statusLabel(status: string) {
   place-items: center;
   border-radius: 50%;
   background: var(--surface-muted);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 720;
 }
 
@@ -271,13 +271,13 @@ function statusLabel(status: string) {
 }
 
 .import-steps strong {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .section-heading p {
   margin: 0.2rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .root-options {
@@ -339,7 +339,7 @@ function statusLabel(status: string) {
 .root-option__copy small {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.75rem;
 }
 
 .root-option__copy > span {
@@ -347,7 +347,7 @@ function statusLabel(status: string) {
   align-items: center;
   gap: 0.32rem;
   color: var(--text-secondary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .drop-zone {
@@ -391,7 +391,7 @@ function statusLabel(status: string) {
 
 .file-review .section-heading > span {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .import-file-list {
@@ -422,7 +422,7 @@ function statusLabel(status: string) {
   border-radius: 8px;
   color: var(--accent-strong);
   background: var(--accent-soft);
-  font-size: 0.61rem;
+  font-size: 0.75rem;
   font-weight: 750;
 }
 
@@ -440,12 +440,12 @@ function statusLabel(status: string) {
 }
 
 .file-copy strong {
-  font-size: 0.73rem;
+  font-size: 0.75rem;
 }
 
 .file-copy small {
   color: var(--text-tertiary);
-  font-size: 0.63rem;
+  font-size: 0.75rem;
 }
 
 .import-errors {
@@ -457,7 +457,7 @@ function statusLabel(status: string) {
   margin-top: 0.7rem;
   color: var(--danger);
   background: var(--danger-soft);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .import-errors span + span {
@@ -478,7 +478,7 @@ function statusLabel(status: string) {
 .import-actions > span,
 .retry-row > span {
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .import-progress {
@@ -503,7 +503,7 @@ function statusLabel(status: string) {
 .import-progress p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
 }
 
@@ -542,12 +542,12 @@ function statusLabel(status: string) {
 }
 
 .result-row strong {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .result-row small {
   color: var(--text-secondary);
-  font-size: 0.64rem;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 700px) {

@@ -130,7 +130,7 @@ onBeforeUnmount(() => {
   color: #433957;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(225, 217, 239, 0.82));
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 760;
   box-shadow: 0 2px 8px rgba(24, 18, 36, 0.16);
 }
@@ -187,7 +187,7 @@ onBeforeUnmount(() => {
 
 .avatar-menu__identity span {
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .avatar-menu__popover button {

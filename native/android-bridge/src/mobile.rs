@@ -2,7 +2,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{
     plugin::{PluginApi, PluginHandle},
-    AppHandle, Runtime,
+    AppHandle, Manager, Runtime,
 };
 use thiserror::Error;
 use zeroize::Zeroizing;

@@ -27,7 +27,7 @@ pub fn sha256_file(path: &Path) -> HostResult<String> {
     let mut file = File::open(path)
         .map_err(|error| HostError::io("failed to open file for checksum verification", error))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let read = file
             .read(&mut buffer)
@@ -645,7 +645,7 @@ fn create_file_backup(
         .open(&backup)
         .map_err(|error| HostError::io("failed to create book backup", error))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         let read = source
             .read(&mut buffer)
@@ -765,7 +765,7 @@ fn copy_file_to_new(
         .open(&temporary_path)
         .map_err(|error| HostError::io("failed to create migration temporary file", error))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
         if cancel.load(Ordering::Acquire) {
             drop(source_file);

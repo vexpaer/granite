@@ -228,8 +228,27 @@ function validateSource(
   }
 
   if (typeof value.uri === 'string') {
-    if (value.kind === 'url' && !value.uri.startsWith('https://')) {
-      addIssue('error', 'source-transport', 'source.uri', 'URL plugin sources must use HTTPS')
+    if (
+      value.kind === 'url' ||
+      value.kind === 'registry' ||
+      value.kind === 'official'
+    ) {
+      try {
+        const sourceUrl = new URL(value.uri)
+        if (sourceUrl.protocol !== 'https:') {
+          addIssue('error', 'source-transport', 'source.uri', 'network plugin sources must use HTTPS')
+        }
+        if (sourceUrl.username || sourceUrl.password) {
+          addIssue(
+            'error',
+            'source-credentials',
+            'source.uri',
+            'plugin source URLs cannot contain credentials',
+          )
+        }
+      } catch {
+        addIssue('error', 'source-uri', 'source.uri', 'plugin source URL is invalid')
+      }
     }
     if (value.kind === 'git') {
       const validGit =
@@ -238,11 +257,6 @@ function validateSource(
         /^git@[^:]+:[^/]+/.test(value.uri)
       if (!validGit) {
         addIssue('error', 'source-transport', 'source.uri', 'git source URI is not supported')
-      }
-    }
-    if (value.kind === 'registry' || value.kind === 'official') {
-      if (!value.uri.startsWith('https://')) {
-        addIssue('error', 'source-transport', 'source.uri', 'registry sources must use HTTPS')
       }
     }
   }
@@ -521,10 +535,30 @@ export function validateManifest(
 export const validatePluginManifest = validateManifest
 
 export function validateDependencyGraph(
-  manifests: readonly PluginManifest[],
+  manifestInputs: readonly unknown[],
 ): DependencyGraphResult {
   const issues: DependencyGraphIssue[] = []
   const byId = new Map<string, PluginManifest>()
+  const manifests: PluginManifest[] = []
+
+  for (const [index, input] of manifestInputs.entries()) {
+    const validation = validateManifest(input)
+    if (!validation.valid || !validation.manifest) {
+      issues.push({
+        severity: 'error',
+        code: 'invalid-manifest',
+        pluginId:
+          input &&
+          typeof input === 'object' &&
+          typeof (input as { id?: unknown }).id === 'string'
+            ? (input as { id: string }).id
+            : `manifest-${index}`,
+        message: 'plugin manifest is invalid',
+      })
+      continue
+    }
+    manifests.push(validation.manifest)
+  }
 
   for (const manifest of manifests) {
     if (byId.has(manifest.id)) {
@@ -704,6 +738,17 @@ export class PermissionDeniedError extends Error {
   }
 }
 
+export const PLUGIN_UI_TYPES = [
+  'page',
+  'panel',
+  'toolbar',
+  'menu',
+  'widget',
+  'settings',
+] as const
+
+export type PluginUiType = (typeof PLUGIN_UI_TYPES)[number]
+
 export const PLUGIN_UI_SLOTS = [
   'app.sidebar',
   'app.dashboard',
@@ -724,7 +769,7 @@ export type PluginUiSlot = (typeof PLUGIN_UI_SLOTS)[number]
 
 export interface PluginUiContribution {
   id: string
-  type: 'page' | 'panel' | 'toolbar' | 'menu' | 'widget' | 'settings'
+  type: PluginUiType
   slot: PluginUiSlot
   title: string
   icon?: string
@@ -764,16 +809,62 @@ export class ControlledUiRegistry {
     if (!PLUGIN_UI_SLOTS.includes(contribution.slot)) {
       throw new Error(`unsupported plugin UI slot: ${contribution.slot}`)
     }
+    if (!PLUGIN_UI_TYPES.includes(contribution.type)) {
+      throw new Error(`unsupported plugin UI type: ${contribution.type}`)
+    }
     if (
-      !contribution.id.startsWith(`${pluginId}:`) &&
-      !contribution.id.startsWith(`${pluginId}/`)
+      typeof contribution.id !== 'string' ||
+      (!contribution.id.startsWith(`${pluginId}:`) &&
+        !contribution.id.startsWith(`${pluginId}/`))
     ) {
       throw new Error('UI contribution ID must be namespaced by the plugin ID')
     }
-    if (!contribution.title.trim()) throw new Error('UI contribution title is required')
-    const unsafeStyles = /(?:^|\.)(?:css|style|globalCss)$/i
-    if (contribution.props && Object.keys(contribution.props).some((key) => unsafeStyles.test(key))) {
-      throw new Error('UI contributions cannot inject global or arbitrary CSS')
+    if (typeof contribution.title !== 'string' || !contribution.title.trim()) {
+      throw new Error('UI contribution title is required')
+    }
+    if (
+      contribution.order !== undefined &&
+      (!Number.isFinite(contribution.order) || !Number.isInteger(contribution.order))
+    ) {
+      throw new Error('UI contribution order must be a finite integer')
+    }
+    if (contribution.platforms !== undefined && !Array.isArray(contribution.platforms)) {
+      throw new Error('UI contribution platforms must be an array')
+    }
+    if (
+      contribution.platformsAllowed !== undefined &&
+      !Array.isArray(contribution.platformsAllowed)
+    ) {
+      throw new Error('UI contribution allowed platforms must be an array')
+    }
+    for (const platform of contribution.platforms ?? []) {
+      if (platform !== 'windows' && platform !== 'android') {
+        throw new Error(`unsupported UI platform: ${String(platform)}`)
+      }
+    }
+    for (const platform of contribution.platformsAllowed ?? []) {
+      if (platform !== 'windows' && platform !== 'android') {
+        throw new Error(`unsupported allowed UI platform: ${String(platform)}`)
+      }
+    }
+    if (
+      contribution.component !== undefined &&
+      typeof contribution.component !== 'function' &&
+      (typeof contribution.component !== 'object' || contribution.component === null)
+    ) {
+      throw new Error('UI component must be a Vue component definition')
+    }
+    if (
+      contribution.props !== undefined &&
+      (contribution.props === null ||
+        typeof contribution.props !== 'object' ||
+        Array.isArray(contribution.props))
+    ) {
+      throw new Error('UI contribution props must be an object')
+    }
+    const unsafeProps = /(?:^|\.)(?:css|style|globalCss|innerHTML|outerHTML|dangerouslySetInnerHTML|vHtml)$/i
+    if (contribution.props && Object.keys(contribution.props).some((key) => unsafeProps.test(key))) {
+      throw new Error('UI contributions cannot inject raw HTML or arbitrary CSS')
     }
     const key = `${pluginId}\u0000${contribution.id}`
     if (this.contributions.has(key)) throw new Error('duplicate UI contribution ID')

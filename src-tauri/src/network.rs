@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Method, Url};
+use reqwest::{redirect::Policy, Method, Url};
 use sha2::{Digest, Sha256};
 
 use crate::error::{HostError, HostResult};
@@ -14,6 +14,7 @@ use crate::models::{ProviderProfile, ProviderResponse, ProviderType};
 
 const MAX_PROVIDER_RESPONSE_BYTES: usize = 512 * 1024 * 1024;
 const MAX_PROVIDER_REQUEST_BYTES: usize = 512 * 1024 * 1024;
+pub const MAX_PLUGIN_ARCHIVE_BYTES: u64 = 20 * 1024 * 1024;
 const AWS_URI_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'.')
@@ -25,6 +26,90 @@ const AWS_URI_PATH_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~')
     .remove(b'/');
+
+pub async fn fetch_plugin_archive(source_url: &str, max_bytes: u64) -> HostResult<Vec<u8>> {
+    if max_bytes == 0 || max_bytes > MAX_PLUGIN_ARCHIVE_BYTES {
+        return Err(HostError::InvalidArgs(format!(
+            "plugin fetch maxBytes must be from 1 through {MAX_PLUGIN_ARCHIVE_BYTES}"
+        )));
+    }
+    let max_bytes = usize::try_from(max_bytes)
+        .map_err(|_| HostError::Unsupported("plugin fetch size limit is too large".into()))?;
+    let mut source = Url::parse(source_url)
+        .map_err(|_| HostError::InvalidArgs("plugin URL is invalid".into()))?;
+    validate_plugin_source_url(&source)?;
+    source.set_fragment(None);
+
+    let client = reqwest::Client::builder()
+        .redirect(Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 || validate_plugin_source_url(attempt.url()).is_err()
+            {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()
+        .map_err(|error| HostError::Network(format!("failed to build HTTP client: {error}")))?;
+    let mut response = client
+        .get(source)
+        .send()
+        .await
+        .map_err(|error| HostError::Network(format!("plugin fetch failed: {error}")))?;
+    if !response.status().is_success() {
+        return Err(HostError::Network(format!(
+            "plugin fetch returned HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        return Err(HostError::Unsupported(format!(
+            "plugin archive exceeds the {max_bytes}-byte requested limit"
+        )));
+    }
+
+    let initial_capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
+        .min(max_bytes);
+    let mut bytes = Vec::with_capacity(initial_capacity);
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| HostError::Network(format!("plugin fetch read failed: {error}")))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(HostError::Unsupported(format!(
+                "plugin archive exceeds the {max_bytes}-byte requested limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+fn validate_plugin_source_url(url: &Url) -> HostResult<()> {
+    if url.scheme() != "https" {
+        return Err(HostError::Forbidden(
+            "plugin sources and redirects must use HTTPS".into(),
+        ));
+    }
+    if url.host_str().is_none() {
+        return Err(HostError::InvalidArgs(
+            "plugin source URL has no host".into(),
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(HostError::Forbidden(
+            "plugin source URLs must not contain embedded credentials".into(),
+        ));
+    }
+    Ok(())
+}
 
 pub async fn provider_request(
     profile: ProviderProfile,
@@ -470,5 +555,26 @@ mod tests {
     fn canonical_query_sorts_encoded_parameters() {
         let url = Url::parse("https://example.test/path?z=hello%20world&a=2&a=1").expect("url");
         assert_eq!(canonical_query(&url), "a=1&a=2&z=hello%20world");
+    }
+
+    #[test]
+    fn plugin_sources_require_https_without_embedded_credentials() {
+        assert!(validate_plugin_source_url(
+            &Url::parse("https://github.com/granite/plugins.zip").expect("url")
+        )
+        .is_ok());
+        assert!(validate_plugin_source_url(
+            &Url::parse("http://github.com/granite/plugins.zip").expect("url")
+        )
+        .is_err());
+        assert!(validate_plugin_source_url(
+            &Url::parse("https://user:secret@example.test/plugins.zip").expect("url")
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn plugin_archive_limit_is_capped_at_twenty_mebibytes() {
+        assert_eq!(MAX_PLUGIN_ARCHIVE_BYTES, 20 * 1024 * 1024);
     }
 }

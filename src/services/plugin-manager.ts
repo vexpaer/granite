@@ -19,6 +19,7 @@ import {
   ControlledUiRegistry,
   GranitePluginRuntime,
   PluginRpcGate,
+  PLUGIN_UI_TYPES,
   PLUGIN_UI_SLOTS,
   validateManifest,
   verifyBundleIntegrity,
@@ -232,11 +233,51 @@ function remoteContributionKey(pluginId: string, id: string): string {
 function registerRemoteContribution(pluginId: string, input: unknown): boolean {
   if (!input || typeof input !== 'object') throw new Error('UI contribution must be an object')
   const contribution = input as PluginUiContribution
-  if (!contribution.id.startsWith(`${pluginId}:`) && !contribution.id.startsWith(`${pluginId}/`)) {
+  if (
+    typeof contribution.id !== 'string' ||
+    (!contribution.id.startsWith(`${pluginId}:`) &&
+      !contribution.id.startsWith(`${pluginId}/`))
+  ) {
     throw new Error('UI contribution ID must be namespaced by the plugin ID')
   }
   if (!PLUGIN_UI_SLOTS.includes(contribution.slot)) throw new Error('unsupported UI slot')
-  if (!contribution.title?.trim()) throw new Error('UI contribution title is required')
+  if (!PLUGIN_UI_TYPES.includes(contribution.type)) throw new Error('unsupported UI type')
+  if (typeof contribution.title !== 'string' || !contribution.title.trim()) {
+    throw new Error('UI contribution title is required')
+  }
+  if (
+    contribution.order !== undefined &&
+    (!Number.isFinite(contribution.order) || !Number.isInteger(contribution.order))
+  ) {
+    throw new Error('UI contribution order must be a finite integer')
+  }
+  if (contribution.platforms !== undefined && !Array.isArray(contribution.platforms)) {
+    throw new Error('UI contribution platforms must be an array')
+  }
+  if (
+    contribution.platformsAllowed !== undefined &&
+    !Array.isArray(contribution.platformsAllowed)
+  ) {
+    throw new Error('UI contribution allowed platforms must be an array')
+  }
+  for (const platform of contribution.platforms ?? []) {
+    if (platform !== 'windows' && platform !== 'android') {
+      throw new Error(`unsupported UI platform: ${String(platform)}`)
+    }
+  }
+  if (
+    contribution.props !== undefined &&
+    (contribution.props === null ||
+      typeof contribution.props !== 'object' ||
+      Array.isArray(contribution.props))
+  ) {
+    throw new Error('UI contribution props must be an object')
+  }
+  for (const platform of contribution.platformsAllowed ?? []) {
+    if (platform !== 'windows' && platform !== 'android') {
+      throw new Error(`unsupported allowed UI platform: ${String(platform)}`)
+    }
+  }
   const key = remoteContributionKey(pluginId, contribution.id)
   if (remoteUi.has(key)) throw new Error('duplicate UI contribution ID')
   remoteUi.set(
@@ -248,7 +289,7 @@ function registerRemoteContribution(pluginId: string, input: unknown): boolean {
       title: contribution.title,
       icon: contribution.icon,
       order: contribution.order,
-      props: contribution.props ? JSON.parse(JSON.stringify(contribution.props)) : undefined,
+      props: contribution.props ? structuredClone(contribution.props) : undefined,
       pluginId,
     }),
   )
@@ -1169,14 +1210,11 @@ function createSandboxTransport(
     const worker = new WorkerSandboxTransport(manifest.id, bundleSource)
     return Object.assign(worker, {
       kind: 'worker' as const,
-      notify: (event: string, payload: unknown) => worker.notify(event, payload),
     })
   }
   const iframe = new IframeSandboxTransport(manifest.id, bundleSource)
   return Object.assign(iframe, {
     kind: 'iframe' as const,
-    mount: (container: HTMLElement) => iframe.mount(container),
-    notify: (event: string, payload: unknown) => iframe.notify(event, payload),
   })
 }
 
@@ -1269,7 +1307,9 @@ export async function activateInstalled(
         emit(event: string, value: unknown): void
       }
       eventContext.emit(name, payload)
-      sandbox?.notify(name, payload)
+      if (sandbox && name.startsWith(`plugin:${plugin.id}/`)) {
+        sandbox.notify(name, payload)
+      }
     })
     if (disposeEvents) eventDisposers.set(plugin.id, disposeEvents)
     refreshUiRegistry()
@@ -1382,6 +1422,8 @@ const DEFAULT_PLUGIN_SOURCE_HOSTS = [
 function validatePluginSourceUrl(sourceUrl: string, allowedHosts: readonly string[]): URL {
   const url = new URL(sourceUrl)
   if (url.protocol !== 'https:') throw new Error('plugin source must use HTTPS')
+  if (url.username || url.password) throw new Error('plugin source URLs cannot contain credentials')
+  if (url.port && url.port !== '443') throw new Error('plugin source must use the HTTPS port')
   if (!allowedHosts.includes(url.hostname.toLowerCase())) {
     throw new Error(`plugin source host is not allowed: ${url.hostname}`)
   }
