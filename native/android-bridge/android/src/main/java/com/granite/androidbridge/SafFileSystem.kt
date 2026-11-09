@@ -74,6 +74,9 @@ internal class SafFileSystem(private val context: Context) {
                 val name = child.name ?: continue
                 val relative = if (prefix.isEmpty()) name else "$prefix/$name"
                 if (child.isDirectory) {
+                    if (name == INTERNAL_DIRECTORY_NAME || name == NOTEBOOK_DIRECTORY_NAME) {
+                        continue
+                    }
                     if (relative.length <= MAX_RELATIVE_PATH_LENGTH) {
                         pending.add(child to relative)
                     }
@@ -100,6 +103,81 @@ internal class SafFileSystem(private val context: Context) {
 
     fun locateBook(root: JsonNode, relativePath: String): Boolean {
         return findExistingFile(rootDirectory(root), relativePath)?.isFile == true
+    }
+
+    fun trashBook(root: JsonNode, relativePath: String, bookId: String): JSObject {
+        if (root.path("kind").asText() != "saf") {
+            throw BridgeFailure("Android book.trash requires a SAF library root")
+        }
+        val tree = rootDirectory(root)
+        requireWritable(tree)
+        rejectProtectedRelativePath(relativePath)
+        val expectedName = safeRelativeParts(relativePath).last()
+        val safeBookId = safePathComponent(bookId, "book ID")
+        val source = findExistingFile(tree, relativePath)
+        if (source == null) {
+            if (hasTrashCopy(tree, safeBookId, expectedName)) {
+                return JSObject().put("trashed", true)
+            }
+            throw BridgeFailure("Book file is missing")
+        }
+        if (!source.isFile || !source.exists()) {
+            throw BridgeFailure("Book file is missing")
+        }
+        val sourceName = source.name
+            ?: throw BridgeFailure("Cannot resolve the book filename")
+        val sourceParent = source.parentFile
+            ?: throw BridgeFailure("Cannot resolve the book's parent folder")
+        val internal = ensureDirectory(tree, INTERNAL_DIRECTORY_NAME)
+        val trash = ensureDirectory(internal, TRASH_DIRECTORY_NAME)
+        val perBook = ensureDirectory(trash, safeBookId)
+        val trashName = uniqueName(
+            perBook,
+            "${System.currentTimeMillis()}-${UUID.randomUUID()}-${sanitizeFilename(sourceName)}",
+        )
+        val sourceBeforeMove = hashDocument(source)
+        val destination = perBook.createFile(
+            source.type ?: mimeTypeForName(sourceName),
+            trashName,
+        ) ?: throw BridgeFailure("The selected folder does not allow a trash copy")
+
+        try {
+            val copied = copyDocument(source, destination)
+            val destinationBeforeDelete = hashDocument(destination)
+            if (
+                copied != sourceBeforeMove ||
+                destinationBeforeDelete != sourceBeforeMove
+            ) {
+                throw BridgeFailure("Book trash copy verification failed")
+            }
+
+            if (!source.delete()) {
+                throw BridgeFailure("The selected provider did not remove the original book")
+            }
+
+            val destinationAfterMove = hashDocument(destination)
+            if (destinationAfterMove != sourceBeforeMove) {
+                restoreBook(sourceParent, sourceName, destination, sourceBeforeMove)
+                throw BridgeFailure(
+                    "Book trash verification failed after removal; the original was restored",
+                )
+            }
+
+            return JSObject().put("trashed", true)
+        } catch (exception: Exception) {
+            if (!source.exists() && destination.exists()) {
+                try {
+                    restoreBook(sourceParent, sourceName, destination, sourceBeforeMove)
+                } catch (restoreError: Exception) {
+                    throw BridgeFailure(
+                        "Book trash failed after removing the original; " +
+                            "the trash copy was retained and restore also failed: " +
+                            (restoreError.message ?: exception.message ?: "unknown error"),
+                    )
+                }
+            }
+            throw exception
+        }
     }
 
     fun importBook(root: JsonNode, requestedName: String, bytes: ByteArray): ImportedBook {
@@ -395,6 +473,29 @@ internal class SafFileSystem(private val context: Context) {
         return parts
     }
 
+    private fun rejectProtectedRelativePath(relativePath: String) {
+        val first = relativePath.replace('\\', '/').substringBefore('/')
+        if (first == INTERNAL_DIRECTORY_NAME || first == NOTEBOOK_DIRECTORY_NAME) {
+            throw BridgeFailure("Granite metadata and Notebook files cannot be trashed as books")
+        }
+    }
+
+    private fun safePathComponent(input: String, label: String): String {
+        if (
+            input.isBlank() ||
+            input.length > 180 ||
+            input == "." ||
+            input == ".." ||
+            input.startsWith('/') ||
+            input.contains('/') ||
+            input.contains('\\') ||
+            input.contains('\u0000')
+        ) {
+            throw BridgeFailure("Invalid $label")
+        }
+        return input
+    }
+
     private fun sanitizeFilename(input: String): String {
         val cleaned = input
             .substringAfterLast('/')
@@ -419,6 +520,34 @@ internal class SafFileSystem(private val context: Context) {
             val candidate = "$stem ($counter)$extension"
             if (parent.findFile(candidate) == null) return candidate
             counter++
+        }
+    }
+
+    private fun ensureDirectory(parent: DocumentFile, name: String): DocumentFile {
+        val existing = parent.findFile(name)
+        if (existing != null) {
+            if (!existing.isDirectory) {
+                throw BridgeFailure("Granite metadata path is not a folder")
+            }
+            return existing
+        }
+        return parent.createDirectory(name)
+            ?: throw BridgeFailure("The selected folder does not allow Granite trash storage")
+    }
+
+    private fun hasTrashCopy(tree: DocumentFile, bookId: String, originalName: String): Boolean {
+        val internal = tree.findFile(INTERNAL_DIRECTORY_NAME)
+            ?.takeIf(DocumentFile::isDirectory)
+            ?: return false
+        val trash = internal.findFile(TRASH_DIRECTORY_NAME)
+            ?.takeIf(DocumentFile::isDirectory)
+            ?: return false
+        val perBook = trash.findFile(bookId)
+            ?.takeIf(DocumentFile::isDirectory)
+            ?: return false
+        val suffix = "-${sanitizeFilename(originalName)}"
+        return perBook.listFiles().any { file ->
+            file.isFile && file.name?.endsWith(suffix) == true
         }
     }
 
@@ -498,6 +627,32 @@ internal class SafFileSystem(private val context: Context) {
             }
         }
         return HashResult(digest.digest().toHex(), size)
+    }
+
+    private fun restoreBook(
+        parent: DocumentFile,
+        originalName: String,
+        trashCopy: DocumentFile,
+        expected: HashResult,
+    ) {
+        if (parent.findFile(originalName) != null) {
+            throw BridgeFailure(
+                "Book trash verification failed and the restore target already exists",
+            )
+        }
+        val restored = parent.createFile(
+            trashCopy.type ?: mimeTypeForName(originalName),
+            originalName,
+        ) ?: throw BridgeFailure(
+            "Book trash verification failed and the original could not be restored",
+        )
+        val copied = copyDocument(trashCopy, restored)
+        val verified = hashDocument(restored)
+        if (copied != expected || verified != expected) {
+            throw BridgeFailure(
+                "Book trash verification failed and restored-byte verification failed",
+            )
+        }
     }
 
     private fun copyToUniqueBackup(
@@ -580,6 +735,9 @@ internal class SafFileSystem(private val context: Context) {
 
     companion object {
         private const val MAX_RELATIVE_PATH_LENGTH = 4096
+        private const val INTERNAL_DIRECTORY_NAME = ".granite"
+        private const val NOTEBOOK_DIRECTORY_NAME = "Notebook"
+        private const val TRASH_DIRECTORY_NAME = "trash"
         private val SUPPORTED_BOOK_EXTENSIONS = setOf("epub", "pdf", "txt", "mobi")
     }
 }

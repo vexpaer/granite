@@ -9,7 +9,9 @@ use walkdir::WalkDir;
 
 use crate::error::{HostError, HostResult};
 use crate::filesystem::{atomic_write_path, sha256_bytes};
-use crate::paths::{ensure_within, now_rfc3339, safe_relative_path, sanitize_component};
+use crate::paths::{
+    create_safe_directory, ensure_within, now_rfc3339, safe_relative_path, sanitize_component,
+};
 
 const NOTEBOOK_DIRECTORY_NAME: &str = "Notebook";
 const INDEX_DIRECTORY_NAME: &str = ".granite";
@@ -51,11 +53,7 @@ struct DiskNote {
 }
 
 pub fn mirror_state(state: &Value, fallback_library_root: &Path) -> HostResult<()> {
-    let notebook_directory = notebook_directory(state, fallback_library_root, true)?;
-    fs::create_dir_all(&notebook_directory)
-        .map_err(|error| HostError::io("failed to create Notebook directory", error))?;
-    let canonical_notebook = fs::canonicalize(&notebook_directory)
-        .map_err(|error| HostError::io("failed to validate Notebook directory", error))?;
+    let canonical_notebook = notebook_directory(state, fallback_library_root, true)?;
 
     let previous_index = load_index(&canonical_notebook).unwrap_or_default();
     let mut index = NotebookIndex {
@@ -103,15 +101,30 @@ pub fn mirror_state(state: &Value, fallback_library_root: &Path) -> HostResult<(
             &mut used_paths,
             &existing_paths,
         )?;
-        let target = canonical_notebook.join(safe_relative_path(&relative_path)?);
+        let relative = safe_relative_path(&relative_path)?;
+        let target = canonical_notebook.join(&relative);
         let parent = target.parent().ok_or_else(|| {
             HostError::Forbidden("Notebook path has no safe parent directory".into())
         })?;
-        fs::create_dir_all(parent)
-            .map_err(|error| HostError::io("failed to create Notebook folder", error))?;
-        let canonical_parent = fs::canonicalize(parent)
-            .map_err(|error| HostError::io("failed to validate Notebook folder", error))?;
-        ensure_within(&canonical_notebook, &canonical_parent)?;
+        let parent_relative = parent.strip_prefix(&canonical_notebook).map_err(|_| {
+            HostError::Forbidden("Notebook folder escapes the Notebook directory".into())
+        })?;
+        let canonical_parent = create_safe_directory(&canonical_notebook, parent_relative)?;
+        let target = canonical_parent.join(
+            target
+                .file_name()
+                .ok_or_else(|| HostError::Forbidden("Notebook file has no file name".into()))?,
+        );
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(HostError::Forbidden(
+                    "Notebook target is an existing symbolic link".into(),
+                ))
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(HostError::io("failed to inspect Notebook target", error)),
+        }
 
         let document = render_markdown(note, id, title, folder, body)?;
         let document_hash = sha256_bytes(document.as_bytes());
@@ -223,10 +236,9 @@ pub fn sync_from_disk(state: &Value, fallback_library_root: &Path) -> HostResult
             (!path.is_file()).then(|| id.clone())
         })
         .collect();
-    notes.retain(|note| {
-        note.get("id")
-            .and_then(Value::as_str)
-            .is_none_or(|id| !missing_managed_ids.contains(id))
+    notes.retain(|note| match note.get("id").and_then(Value::as_str) {
+        Some(id) => !missing_managed_ids.contains(id),
+        None => true,
     });
 
     let mut existing_by_id: HashMap<String, usize> = HashMap::new();
@@ -323,12 +335,14 @@ fn notebook_directory(
         ));
     }
     let library_root = selected.unwrap_or_else(|| fallback_library_root.to_path_buf());
-    let metadata = fs::metadata(&library_root).map_err(|_| {
+    let canonical_root = fs::canonicalize(&library_root).map_err(|_| {
         HostError::NotFound(
             "the selected local library folder is unavailable; Notebook files were not read or changed"
                 .into(),
         )
     })?;
+    let metadata = fs::metadata(&canonical_root)
+        .map_err(|error| HostError::io("failed to inspect the local library folder", error))?;
     if !metadata.is_dir() {
         return Err(HostError::InvalidArgs(
             "the selected local library path is not a directory".into(),
@@ -339,7 +353,23 @@ fn notebook_directory(
             "the selected local library folder is read-only".into(),
         ));
     }
-    Ok(library_root.join(NOTEBOOK_DIRECTORY_NAME))
+    if writable {
+        create_safe_directory(&canonical_root, Path::new(NOTEBOOK_DIRECTORY_NAME))
+    } else {
+        let notebook = canonical_root.join(NOTEBOOK_DIRECTORY_NAME);
+        if !notebook.exists() {
+            return Ok(notebook);
+        }
+        let canonical = fs::canonicalize(&notebook)
+            .map_err(|error| HostError::io("failed to validate Notebook directory", error))?;
+        ensure_within(&canonical_root, &canonical)?;
+        if !canonical.is_dir() {
+            return Err(HostError::InvalidArgs(
+                "Notebook path is not a directory".into(),
+            ));
+        }
+        Ok(canonical)
+    }
 }
 
 fn select_note_path(
@@ -599,7 +629,11 @@ fn split_frontmatter(content: &str) -> HostResult<(Map<String, Value>, String)> 
             let metadata = yaml_value.as_object().cloned().ok_or_else(|| {
                 HostError::InvalidArgs("Note front matter must be a YAML object".into())
             })?;
-            return Ok((metadata, content[body_start..].to_owned()));
+            let body = content[body_start..]
+                .strip_prefix("\r\n")
+                .or_else(|| content[body_start..].strip_prefix('\n'))
+                .unwrap_or(&content[body_start..]);
+            return Ok((metadata, body.to_owned()));
         }
         if line_end == content.len() {
             break;
@@ -706,15 +740,8 @@ fn write_recovery_copy(
     document: &str,
 ) -> HostResult<()> {
     let safe_id = sanitize_component(note_id)?;
-    let directory = notebook_directory
-        .join(INDEX_DIRECTORY_NAME)
-        .join(category)
-        .join(safe_id);
-    fs::create_dir_all(&directory)
-        .map_err(|error| HostError::io("failed to create Notebook recovery directory", error))?;
-    let canonical = fs::canonicalize(&directory)
-        .map_err(|error| HostError::io("failed to validate Notebook recovery directory", error))?;
-    ensure_within(notebook_directory, &canonical)?;
+    let relative = Path::new(INDEX_DIRECTORY_NAME).join(category).join(safe_id);
+    let directory = create_safe_directory(notebook_directory, &relative)?;
     atomic_write_path(
         &directory.join(format!("{content_hash}.md")),
         document.as_bytes(),
@@ -748,15 +775,8 @@ fn move_indexed_note_to_trash(
     ensure_within(notebook_directory, &canonical_source)?;
 
     let safe_id = sanitize_component(note_id)?;
-    let trash_directory = notebook_directory
-        .join(INDEX_DIRECTORY_NAME)
-        .join("trash")
-        .join(safe_id);
-    fs::create_dir_all(&trash_directory)
-        .map_err(|error| HostError::io("failed to create Notebook trash directory", error))?;
-    let canonical_trash = fs::canonicalize(&trash_directory)
-        .map_err(|error| HostError::io("failed to validate Notebook trash directory", error))?;
-    ensure_within(notebook_directory, &canonical_trash)?;
+    let trash_relative = Path::new(INDEX_DIRECTORY_NAME).join("trash").join(safe_id);
+    let trash_directory = create_safe_directory(notebook_directory, &trash_relative)?;
     let filename = source
         .file_name()
         .and_then(|value| value.to_str())
@@ -808,12 +828,7 @@ fn load_index(notebook_directory: &Path) -> HostResult<NotebookIndex> {
 }
 
 fn write_index(notebook_directory: &Path, index: &NotebookIndex) -> HostResult<()> {
-    let directory = notebook_directory.join(INDEX_DIRECTORY_NAME);
-    fs::create_dir_all(&directory)
-        .map_err(|error| HostError::io("failed to create Notebook metadata directory", error))?;
-    let canonical = fs::canonicalize(&directory)
-        .map_err(|error| HostError::io("failed to validate Notebook metadata directory", error))?;
-    ensure_within(notebook_directory, &canonical)?;
+    let directory = create_safe_directory(notebook_directory, Path::new(INDEX_DIRECTORY_NAME))?;
     let bytes = serde_json::to_vec(index)
         .map_err(|error| HostError::json("failed to serialize Notebook index", error))?;
     atomic_write_path(&directory.join(INDEX_FILE_NAME), &bytes)
@@ -1009,5 +1024,19 @@ mod tests {
         let result = sync_from_disk(&state, fallback.path());
         assert!(result.is_err());
         assert_eq!(state["notes"].as_array().expect("notes").len(), 1);
+    }
+
+    #[test]
+    fn notebook_metadata_file_is_never_replaced_by_a_directory() {
+        let library = tempdir().expect("library");
+        let notebook = library.path().join("Notebook");
+        fs::create_dir(&notebook).expect("notebook");
+        fs::write(notebook.join(".granite"), b"keep this metadata").expect("metadata file");
+
+        assert!(mirror_state(&state_with_note("body"), library.path()).is_err());
+        assert_eq!(
+            fs::read(notebook.join(".granite")).expect("metadata preserved"),
+            b"keep this metadata"
+        );
     }
 }

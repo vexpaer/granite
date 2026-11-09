@@ -27,7 +27,7 @@ internal class ShareInbox(private val context: Context) {
         }
 
         ensureInbox()
-        val records = readIndex().toMutableList()
+        val records = readIndex()
         val existingUris = records.mapNotNull { it.optString("sourceUri").takeIf(String::isNotBlank) }.toSet()
         val captured = mutableListOf<StoredShare>()
 
@@ -114,11 +114,10 @@ internal class ShareInbox(private val context: Context) {
         val records = readIndex()
         if (records.isEmpty()) return 0
 
-        val retained = JSONArray()
+        val retained = mutableListOf<JSONObject>()
         val removedFiles = mutableListOf<File>()
         var acknowledged = 0
-        for (index in 0 until records.length()) {
-            val record = records.getJSONObject(index)
+        for (record in records) {
             val id = record.optString("id")
             if (id in ids) {
                 acknowledged++
@@ -126,7 +125,7 @@ internal class ShareInbox(private val context: Context) {
                     .takeIf(String::isNotBlank)
                     ?.let { removedFiles += File(inboxDirectory, it) }
             } else {
-                retained.put(record)
+                retained += record
             }
         }
         if (acknowledged == 0) return 0
@@ -142,7 +141,7 @@ internal class ShareInbox(private val context: Context) {
     }
 
     @Synchronized
-    fun pendingCount(): Int = if (indexFile.isFile) readIndex().length() else 0
+    fun pendingCount(): Int = if (indexFile.isFile) readIndex().size else 0
 
     private fun sharedUris(intent: Intent): List<Uri> {
         val uris = linkedSetOf<Uri>()
@@ -221,28 +220,27 @@ internal class ShareInbox(private val context: Context) {
         }
     }
 
-    private fun readIndex(): JSONArray {
-        if (!indexFile.isFile) return JSONArray()
+    private fun readIndex(): MutableList<JSONObject> {
+        if (!indexFile.isFile) return mutableListOf()
         return try {
-            JSONArray(indexFile.readText(Charsets.UTF_8))
+            val array = JSONArray(indexFile.readText(Charsets.UTF_8))
+            MutableList(array.length()) { index -> array.getJSONObject(index) }
         } catch (_: Exception) {
             throw BridgeFailure("Android share inbox metadata is corrupt")
         }
     }
 
     private fun writeIndex(records: List<JSONObject>): Boolean {
-        return writeIndex(JSONArray(records))
-    }
-
-    private fun writeIndex(records: JSONArray): Boolean {
         ensureInbox()
         val temporary = File(inboxDirectory, "index-${UUID.randomUUID()}.tmp")
         val backup = File(inboxDirectory, "index-${UUID.randomUUID()}.bak")
         var previousMoved = false
         var replacementMoved = false
         return try {
+            val json = JSONArray()
+            for (record in records) json.put(record)
             FileOutputStream(temporary).use { output ->
-                output.write(records.toString().toByteArray(Charsets.UTF_8))
+                output.write(json.toString().toByteArray(Charsets.UTF_8))
                 output.flush()
                 output.fd.sync()
             }

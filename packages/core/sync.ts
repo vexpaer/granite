@@ -656,7 +656,10 @@ export function mergeReadingProgressHistory(
 }
 
 export function getSyncPolicyDecision(input: SyncPolicyInput): SyncPolicyDecision {
-  const metadata = input.object === 'metadata' || input.policy !== 'metadata'
+  const metadata =
+    input.object === 'metadata' ||
+    input.object === 'plugin-data' ||
+    input.policy !== 'metadata'
   const selectedBook =
     Boolean(input.bookId && input.selectedBookIds?.includes(input.bookId)) ||
     Boolean(
@@ -761,30 +764,147 @@ export async function createDeviceSyncDocument(
     ...unsigned,
     checksum: await digest(canonicalJson(unsigned)),
   }
+  const validationErrors = validateDeviceSyncDocument(document)
+  if (validationErrors.length) {
+    throw new TypeError(`invalid sync document: ${validationErrors.join('; ')}`)
+  }
   return document
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isSyncRevision(value: unknown): value is SyncRevision {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.counter) &&
+    (value.counter as number) >= 0 &&
+    typeof value.deviceId === 'string' &&
+    !value.deviceId.includes('/') &&
+    !value.deviceId.includes('\\') &&
+    !value.deviceId.includes('\0')
+  )
+}
+
+function isIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value))
 }
 
 export function validateDeviceSyncDocument(value: unknown): string[] {
   const errors: string[] = []
-  if (!value || typeof value !== 'object') return ['document must be an object']
+  if (!isRecord(value)) return ['document must be an object']
   const document = value as Partial<DeviceSyncDocument>
 
   if (document.protocolVersion !== SYNC_PROTOCOL_VERSION) {
     errors.push(`unsupported protocolVersion: ${String(document.protocolVersion)}`)
   }
-  if (!document.deviceId) errors.push('deviceId is required')
+  if (
+    typeof document.deviceId !== 'string' ||
+    !document.deviceId ||
+    document.deviceId.includes('/') ||
+    document.deviceId.includes('\\') ||
+    document.deviceId.includes('\0') ||
+    document.deviceId === '.' ||
+    document.deviceId === '..'
+  ) {
+    errors.push('deviceId must be a non-empty path-safe string')
+  }
   if (!Number.isInteger(document.revision) || (document.revision ?? -1) < 0) {
     errors.push('revision must be a non-negative integer')
   }
-  if (!document.generatedAt || Number.isNaN(Date.parse(document.generatedAt))) {
+  if (!isIsoDate(document.generatedAt)) {
     errors.push('generatedAt must be an ISO date')
   }
   if (!Array.isArray(document.changes)) errors.push('changes must be an array')
   if (!Array.isArray(document.tombstones)) errors.push('tombstones must be an array')
-  if (!document.pluginData || typeof document.pluginData !== 'object') {
+  if (!isRecord(document.pluginData)) {
     errors.push('pluginData must be an object')
   }
-  if (!document.checksum) errors.push('checksum is required')
+  if (document.metadata !== undefined && !isRecord(document.metadata)) {
+    errors.push('metadata must be an object')
+  }
+  if (typeof document.checksum !== 'string' || !document.checksum) {
+    errors.push('checksum is required')
+  }
+
+  const changes = Array.isArray(document.changes) ? document.changes : []
+  const tombstones = Array.isArray(document.tombstones) ? document.tombstones : []
+
+  for (const [index, rawChange] of changes.entries()) {
+    if (!isRecord(rawChange)) {
+      errors.push(`changes.${index} must be an object`)
+      continue
+    }
+    if (typeof rawChange.id !== 'string' || !rawChange.id) {
+      errors.push(`changes.${index}.id is required`)
+    }
+    if (typeof rawChange.entityType !== 'string' || !rawChange.entityType) {
+      errors.push(`changes.${index}.entityType is required`)
+    }
+    if (typeof rawChange.entityId !== 'string' || !rawChange.entityId) {
+      errors.push(`changes.${index}.entityId is required`)
+    }
+    if (rawChange.operation !== 'upsert') {
+      errors.push(`changes.${index}.operation must be upsert`)
+    }
+    if (!isSyncRevision(rawChange.revision)) {
+      errors.push(`changes.${index}.revision is invalid`)
+    }
+    if (
+      isRecord(rawChange.revision) &&
+      rawChange.revision.deviceId !== document.deviceId
+    ) {
+      errors.push(`changes.${index}.revision belongs to another device`)
+    }
+    if (
+      rawChange.parents !== undefined &&
+      (!Array.isArray(rawChange.parents) || !rawChange.parents.every(isSyncRevision))
+    ) {
+      errors.push(`changes.${index}.parents must contain valid revisions`)
+    }
+    if (rawChange.baseChecksum !== undefined && typeof rawChange.baseChecksum !== 'string') {
+      errors.push(`changes.${index}.baseChecksum must be a string`)
+    }
+    if (typeof rawChange.checksum !== 'string' || !rawChange.checksum) {
+      errors.push(`changes.${index}.checksum is required`)
+    }
+  }
+
+  for (const [index, rawTombstone] of tombstones.entries()) {
+    if (!isRecord(rawTombstone)) {
+      errors.push(`tombstones.${index} must be an object`)
+      continue
+    }
+    if (typeof rawTombstone.id !== 'string' || !rawTombstone.id) {
+      errors.push(`tombstones.${index}.id is required`)
+    }
+    if (typeof rawTombstone.entityType !== 'string' || !rawTombstone.entityType) {
+      errors.push(`tombstones.${index}.entityType is required`)
+    }
+    if (typeof rawTombstone.entityId !== 'string' || !rawTombstone.entityId) {
+      errors.push(`tombstones.${index}.entityId is required`)
+    }
+    if (!isIsoDate(rawTombstone.at)) {
+      errors.push(`tombstones.${index}.at must be an ISO date`)
+    }
+    if (rawTombstone.deviceId !== document.deviceId) {
+      errors.push(`tombstones.${index}.deviceId belongs to another device`)
+    }
+    if (!Number.isInteger(rawTombstone.revision) || (rawTombstone.revision as number) < 0) {
+      errors.push(`tombstones.${index}.revision must be a non-negative integer`)
+    }
+    if (
+      rawTombstone.revisionStamp !== undefined &&
+      (!isSyncRevision(rawTombstone.revisionStamp) ||
+        rawTombstone.revisionStamp.deviceId !== document.deviceId)
+    ) {
+      errors.push(`tombstones.${index}.revisionStamp is invalid`)
+    }
+    if (rawTombstone.hash !== undefined && typeof rawTombstone.hash !== 'string') {
+      errors.push(`tombstones.${index}.hash must be a string`)
+    }
+  }
   return errors
 }
 
@@ -823,6 +943,19 @@ export async function parseDeviceSyncDocument(
   return document
 }
 
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key)
+}
+
+function setOwn(record: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+}
+
 function mergePluginDataPair(
   local: Record<string, unknown>,
   remote: Record<string, unknown>,
@@ -832,8 +965,8 @@ function mergePluginDataPair(
   const conflicts: SyncConflict[] = []
 
   for (const [namespace, remoteValue] of Object.entries(remote)) {
-    if (!(namespace in pluginData)) {
-      pluginData[namespace] = cloneJsonValue(remoteValue)
+    if (!hasOwn(pluginData, namespace)) {
+      setOwn(pluginData, namespace, cloneJsonValue(remoteValue))
       continue
     }
 
@@ -854,17 +987,17 @@ function mergePluginDataPair(
         remoteValue as Record<string, unknown>,
         remoteDeviceId,
       )
-      pluginData[namespace] = nested.pluginData
+      setOwn(pluginData, namespace, nested.pluginData)
       conflicts.push(...nested.conflicts)
       continue
     }
 
     let conflictNamespace = `${namespace}#conflict-${remoteDeviceId}`
     let suffix = 2
-    while (conflictNamespace in pluginData) {
+    while (hasOwn(pluginData, conflictNamespace)) {
       conflictNamespace = `${namespace}#conflict-${remoteDeviceId}-${suffix++}`
     }
-    pluginData[conflictNamespace] = cloneJsonValue(remoteValue)
+    setOwn(pluginData, conflictNamespace, cloneJsonValue(remoteValue))
     conflicts.push({
       id: `${namespace}:${remoteDeviceId}`,
       type: 'plugin-data',

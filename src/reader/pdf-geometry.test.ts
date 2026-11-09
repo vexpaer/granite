@@ -6,6 +6,7 @@ import {
   fitWidthScale,
   nearestLegalTransform,
   pageAtViewportCenter,
+  zoomAndPanBetweenPoints,
   zoomAroundPoint,
 } from './pdf-geometry';
 import { PDF_OVERSCROLL_RATIO } from './types';
@@ -29,6 +30,21 @@ describe('PDF free canvas geometry', () => {
     const zoomed = zoomAroundPoint(initial, 2.4, point);
     expect((point.x - zoomed.x) / zoomed.scale).toBeCloseTo(contentBefore.x);
     expect((point.y - zoomed.y) / zoomed.scale).toBeCloseTo(contentBefore.y);
+  });
+
+  it('combines the two-pointer midpoint translation with anchored zoom', () => {
+    const base = { x: 40, y: 70, scale: 1.25 };
+    const startPoint = { x: 220, y: 310 };
+    const currentPoint = { x: 280, y: 250 };
+    const next = zoomAndPanBetweenPoints(base, 2, startPoint, currentPoint);
+
+    expect((startPoint.x - base.x) / base.scale).toBeCloseTo(
+      (currentPoint.x - next.x) / next.scale,
+    );
+    expect((startPoint.y - base.y) / base.scale).toBeCloseTo(
+      (currentPoint.y - next.y) / next.scale,
+    );
+    expect(next.scale).toBe(2);
   });
 
   it('centers a document smaller than the viewport and bounds a larger one', () => {

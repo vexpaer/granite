@@ -9,17 +9,18 @@ For pull requests and non-tag branch pushes, the Debug job runs:
 1. `npm ci`
 2. `npm run typecheck`
 3. `node scripts/create-fixtures.mjs`
-4. `npm test`
-5. `npm run build`
-6. Rust setup with all four Android targets
-7. Java 17 setup
-8. Android SDK, build-tools, NDK, and CMake installation
-9. `tauri android init` only when `src-tauri/gen/android/app/build.gradle.kts`
+4. `node packages/core/examples/basic-plugin/build.mjs`
+5. `npm test`
+6. `npm run build`
+7. Rust setup with all four Android targets
+8. Java 17 setup
+9. Android SDK, build-tools, NDK, and CMake installation
+10. `tauri android init` only when `src-tauri/gen/android/app/build.gradle.kts`
    is absent
-10. `chmod +x src-tauri/gen/android/gradlew`
-11. `npx tauri android build --debug --apk --target aarch64 --ci`
-12. APK signature, checksum, badging, and merged-manifest inspection
-13. Debug APK artifact upload
+11. `chmod +x src-tauri/gen/android/gradlew`
+12. `npx tauri android build --debug --apk --target aarch64 --ci`
+13. APK signature, checksum, badging, and merged-manifest inspection
+14. Debug APK artifact upload
 
 For `v*` tags, the Release job repeats the checks and build, configures signing
 from repository secrets, verifies the APK with `apksigner`, and creates or

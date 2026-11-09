@@ -22,9 +22,11 @@ if [[ -z "$android_home" ]]; then
 fi
 
 find_tool() {
-  local name="$1"
+  local stem="$1"
   local search_root="$2"
-  find "$search_root" -type f -name "$name" -print | sort -V | tail -n 1
+  find "$search_root" -type f \
+    \( -name "$stem" -o -name "$stem.exe" -o -name "$stem.bat" \) \
+    -print | sort -V | tail -n 1
 }
 
 apksigner="$(find_tool apksigner "$android_home/build-tools")"

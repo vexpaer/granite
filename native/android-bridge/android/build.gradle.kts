@@ -27,6 +27,8 @@ kotlin {
 }
 
 dependencies {
+    implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.15.3")

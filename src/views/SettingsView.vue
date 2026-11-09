@@ -3,13 +3,18 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import {
   AlertTriangle,
   ArchiveRestore,
+  ArrowDown,
+  ArrowUp,
   BookOpen,
   Boxes,
   CheckCircle2,
   ChevronRight,
   Database,
+  Eye,
+  EyeOff,
   FolderCog,
   FolderPlus,
+  House,
   ImagePlus,
   Keyboard,
   MonitorCog,
@@ -22,6 +27,15 @@ import { defaultSettings, useApp } from '../stores/app';
 import DialogPanel from '../components/DialogPanel.vue';
 import PageHeader from '../components/PageHeader.vue';
 import PluginSlots from '../components/PluginSlots.vue';
+import {
+  DEFAULT_HOME_COUNTS,
+  DEFAULT_HOME_HIDDEN,
+  DEFAULT_HOME_ORDER,
+  HOME_MODULES,
+  resolveHomeLayout,
+  type HomeModuleDefinition,
+  type HomeModuleId,
+} from '../components/homeLayout';
 import { formatDateTime, initials } from '../components/utils';
 import type { LibraryRoot } from '../types';
 
@@ -38,6 +52,7 @@ const category = ref(categories.some((item) => item.id === app.route.id) ? Strin
 const draft = ref(JSON.parse(JSON.stringify(app.settings)));
 const dirty = ref(false);
 const saving = ref(false);
+const profileBusy = ref(false);
 const savedAt = ref('');
 const removeRootTarget = ref<LibraryRoot | null>(null);
 const migrationOpen = ref(false);
@@ -75,6 +90,23 @@ watch(
 const migrationSources = computed(() => app.roots.filter((root) => root.enabled));
 const shortcutEntries = computed(() => Object.entries(draft.value.shortcuts || {}));
 const disabled = computed(() => saving.value || !dirty.value);
+const homeLayout = computed(() => resolveHomeLayout(draft.value.layout || {}));
+const configurableHomeModules = computed(() =>
+  homeLayout.value.order
+    .map((id) => HOME_MODULES.find((module) => module.id === id))
+    .filter((module): module is HomeModuleDefinition => Boolean(module)),
+);
+const fixedHomeModule = HOME_MODULES.find((module) => module.id === 'hero')!;
+const sidebarWidth = computed({
+  get() {
+    const value = Number(draft.value.layout?.sidebarWidth);
+    return Number.isFinite(value) ? Math.min(320, Math.max(220, value)) : 256;
+  },
+  set(value: number) {
+    ensureDraftLayout();
+    draft.value.layout.sidebarWidth = Math.min(320, Math.max(220, Math.round(value)));
+  },
+});
 const migrationPhaseLabel = computed(() => {
   if (migrationPhase.value === 'verifying') return '正在校验目标副本';
   if (migrationPhase.value === 'cancelled') return '正在停止迁移';
@@ -85,12 +117,110 @@ const migrationPhaseLabel = computed(() => {
 async function save() {
   saving.value = true;
   try {
+    ensureDraftLayout();
     app.settings = JSON.parse(JSON.stringify(draft.value));
     await app.saveSettings();
     dirty.value = false;
     savedAt.value = new Date().toISOString();
   } finally {
     saving.value = false;
+  }
+}
+
+function ensureDraftLayout() {
+  if (!draft.value.layout) draft.value.layout = {};
+  const resolved = resolveHomeLayout(draft.value.layout);
+  draft.value.layout.homeOrder = [...resolved.order];
+  draft.value.layout.homeHidden = [...resolved.hidden];
+  draft.value.layout.homeCounts = { ...resolved.counts };
+}
+
+function moveHomeModule(id: HomeModuleId, direction: -1 | 1) {
+  ensureDraftLayout();
+  const order = [...homeLayout.value.order];
+  const index = order.indexOf(id);
+  const next = index + direction;
+  if (index < 0 || next < 0 || next >= order.length) return;
+  [order[index], order[next]] = [order[next], order[index]];
+  draft.value.layout.homeOrder = order;
+}
+
+function toggleHomeModule(id: HomeModuleId) {
+  ensureDraftLayout();
+  const hidden = [...homeLayout.value.hidden];
+  const index = hidden.indexOf(id);
+  if (index >= 0) hidden.splice(index, 1);
+  else hidden.push(id);
+  draft.value.layout.homeHidden = hidden;
+}
+
+function setHomeModuleCount(module: HomeModuleDefinition, value: number) {
+  if (!module.minCount || !module.maxCount) return;
+  ensureDraftLayout();
+  draft.value.layout.homeCounts = {
+    ...homeLayout.value.counts,
+    [module.id]: Math.min(module.maxCount, Math.max(module.minCount, Math.round(value))),
+  };
+}
+
+function resetHomeLayout() {
+  ensureDraftLayout();
+  draft.value.layout.homeOrder = [...DEFAULT_HOME_ORDER];
+  draft.value.layout.homeHidden = [...DEFAULT_HOME_HIDDEN];
+  draft.value.layout.homeCounts = { ...DEFAULT_HOME_COUNTS };
+}
+
+function homeModuleCountOptions(module: HomeModuleDefinition) {
+  if (!module.minCount || !module.maxCount) return [];
+  return Array.from(
+    { length: module.maxCount - module.minCount + 1 },
+    (_, index) => module.minCount! + index,
+  );
+}
+
+function refreshDraftFromApp() {
+  suppressDirty = true;
+  draft.value = JSON.parse(JSON.stringify(app.settings));
+  dirty.value = false;
+  requestAnimationFrame(() => {
+    suppressDirty = false;
+  });
+}
+
+async function saveCurrentProfile() {
+  const name = draft.value.profile.trim();
+  if (!name) {
+    app.error = '请选择或输入配置名称。';
+    return;
+  }
+  profileBusy.value = true;
+  try {
+    ensureDraftLayout();
+    app.settings = JSON.parse(JSON.stringify(draft.value));
+    if (dirty.value || !savedAt.value) await app.saveSettings();
+    await app.saveProfile(name);
+    refreshDraftFromApp();
+    savedAt.value = new Date().toISOString();
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    profileBusy.value = false;
+  }
+}
+
+async function applySelectedProfile() {
+  const name = draft.value.profile.trim();
+  if (!name) return;
+  profileBusy.value = true;
+  try {
+    if (dirty.value) await save();
+    await app.applyProfile(name);
+    refreshDraftFromApp();
+    savedAt.value = new Date().toISOString();
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    profileBusy.value = false;
   }
 }
 
@@ -287,13 +417,11 @@ onBeforeUnmount(() => {
             </label>
           </div>
           <div class="form-grid settings-form">
-            <label class="form-field">
+            <div class="form-field">
               <span>界面语言</span>
-              <select v-model="draft.language" class="select">
-                <option value="zh-CN">简体中文</option>
-                <option value="en">English</option>
-              </select>
-            </label>
+              <div class="read-only-field">简体中文</div>
+              <small class="field-hint">首版界面以简体中文提供。</small>
+            </div>
             <label class="form-field">
               <span>每日阅读目标（分钟）</span>
               <input v-model.number="draft.dailyGoal" class="field" type="number" min="1" max="1440" />
@@ -303,16 +431,25 @@ onBeforeUnmount(() => {
               <input v-model.number="draft.idleMinutes" class="field" type="number" min="1" max="120" />
               <small class="field-hint">超过阈值没有输入时，不计入有效阅读时间。</small>
             </label>
-            <label class="form-field">
+            <div class="form-field form-field--full profile-setting">
               <span>工作区 Profile</span>
-              <select v-model="draft.profile" class="select">
-                <option value="Minimal">Minimal</option>
-                <option value="Research">Research</option>
-                <option value="Knowledge">Knowledge</option>
-                <option value="Dashboard">Dashboard</option>
-                <option value="Custom">Custom</option>
-              </select>
-            </label>
+              <div class="profile-setting__controls">
+                <select v-model="draft.profile" class="select" aria-label="选择工作区 Profile">
+                  <option value="Minimal">Minimal · 简洁</option>
+                  <option value="Research">Research · 研究</option>
+                  <option value="Knowledge">Knowledge · 知识</option>
+                  <option value="Dashboard">Dashboard · 仪表盘</option>
+                  <option value="Custom">Custom · 自定义</option>
+                </select>
+                <button class="button button--secondary" type="button" :disabled="profileBusy || saving" @click="saveCurrentProfile">
+                  <Save :size="15" />{{ profileBusy ? '处理中' : '保存当前配置' }}
+                </button>
+                <button class="button button--primary" type="button" :disabled="profileBusy || saving" @click="applySelectedProfile">
+                  应用 Profile
+                </button>
+              </div>
+              <small class="field-hint">保存会记录当前主题、布局、插件启用状态与阅读器默认宽度；应用时会保留本机同步 Provider 和凭证。</small>
+            </div>
           </div>
         </template>
 
@@ -336,6 +473,18 @@ onBeforeUnmount(() => {
               <span>侧栏</span>
               <label class="checkbox-line"><input v-model="draft.sidebarExpanded" type="checkbox" />在桌面端默认展开侧栏</label>
             </div>
+            <label class="form-field form-field--full sidebar-width-setting">
+              <span>桌面侧栏宽度 <strong>{{ sidebarWidth }} px</strong></span>
+              <input
+                v-model.number="sidebarWidth"
+                type="range"
+                min="220"
+                max="320"
+                step="4"
+                aria-label="桌面侧栏宽度"
+              />
+              <small class="field-hint">窄窗口仍会自动收起侧栏，避免挤压正文。</small>
+            </label>
           </div>
           <div class="background-setting">
             <div>
@@ -352,6 +501,58 @@ onBeforeUnmount(() => {
             <strong>{{ draft.profile }}</strong>
             <p>当前配置保存应用主题、布局密度和导航状态。阅读主题在“阅读器”分类中独立设置。</p>
           </div>
+          <section class="home-layout-settings" aria-labelledby="home-layout-heading">
+            <div class="settings-section-heading settings-section-heading--action">
+              <div>
+                <h3 id="home-layout-heading">首页模块</h3>
+                <p>欢迎区域固定显示；其余六项可调整顺序、显示数量或隐藏。</p>
+              </div>
+              <button class="button button--ghost button--small" type="button" @click="resetHomeLayout">恢复默认</button>
+            </div>
+            <div class="home-layout-row home-layout-row--fixed">
+              <span class="home-layout-row__icon"><House :size="17" /></span>
+              <span class="home-layout-row__copy">
+                <strong>{{ fixedHomeModule.label }}</strong>
+                <small>{{ fixedHomeModule.description }}</small>
+              </span>
+              <span class="home-layout-row__fixed">固定显示</span>
+            </div>
+            <div
+              v-for="(module, index) in configurableHomeModules"
+              :key="module.id"
+              class="home-layout-row"
+              :class="{ 'is-hidden': homeLayout.hidden.includes(module.id) }"
+            >
+              <span class="home-layout-row__index">{{ index + 1 }}</span>
+              <span class="home-layout-row__copy">
+                <strong>{{ module.label }}</strong>
+                <small>{{ module.description }}</small>
+              </span>
+              <label v-if="module.countLabel" class="home-layout-row__count">
+                <span class="sr-only">{{ module.countLabel }}</span>
+                <select
+                  class="select"
+                  :value="homeLayout.counts[module.id]"
+                  :disabled="homeLayout.hidden.includes(module.id)"
+                  @change="setHomeModuleCount(module, Number(($event.target as HTMLSelectElement).value))"
+                >
+                  <option v-for="count in homeModuleCountOptions(module)" :key="count" :value="count">{{ count }}</option>
+                </select>
+              </label>
+              <div class="home-layout-row__actions">
+                <button class="icon-button icon-button--small" type="button" :aria-label="`上移 ${module.label}`" :disabled="index === 0" @click="moveHomeModule(module.id, -1)">
+                  <ArrowUp :size="15" />
+                </button>
+                <button class="icon-button icon-button--small" type="button" :aria-label="`下移 ${module.label}`" :disabled="index === configurableHomeModules.length - 1" @click="moveHomeModule(module.id, 1)">
+                  <ArrowDown :size="15" />
+                </button>
+                <button class="icon-button icon-button--small" type="button" :aria-label="homeLayout.hidden.includes(module.id) ? `显示 ${module.label}` : `隐藏 ${module.label}`" @click="toggleHomeModule(module.id)">
+                  <Eye v-if="homeLayout.hidden.includes(module.id)" :size="15" />
+                  <EyeOff v-else :size="15" />
+                </button>
+              </div>
+            </div>
+          </section>
         </template>
 
         <template v-else-if="category === 'library'">
@@ -490,8 +691,8 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="reserved-shortcuts">
-            <strong>固定输入</strong>
-            <span><kbd>Ctrl</kbd> + <kbd>K</kbd> 全局搜索</span>
+            <strong>全局输入</strong>
+            <span><kbd>{{ draft.shortcuts.search || 'Control+k' }}</kbd> 全局搜索</span>
             <span><kbd>Alt</kbd> + <kbd>←</kbd> 返回上一页</span>
             <span><kbd>Esc</kbd> 关闭最上层对话框或面板</span>
           </div>
@@ -702,7 +903,8 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
-.settings-section-heading h2 {
+.settings-section-heading h2,
+.settings-section-heading h3 {
   margin: 0;
   font-family: var(--font-display);
   font-size: 1.9rem;
@@ -743,6 +945,41 @@ onBeforeUnmount(() => {
 
 .settings-form {
   margin-top: 1.2rem;
+}
+
+.read-only-field {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+
+.profile-setting__controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.sidebar-width-setting > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-width-setting > span strong {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.sidebar-width-setting input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
 }
 
 .theme-options {
@@ -936,6 +1173,84 @@ onBeforeUnmount(() => {
   margin: 0;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.home-layout-settings {
+  margin-top: 1.4rem;
+}
+
+.home-layout-settings .settings-section-heading {
+  margin-bottom: 0.8rem;
+}
+
+.home-layout-settings .settings-section-heading h3 {
+  font-size: 1.55rem;
+}
+
+.home-layout-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 64px;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+}
+
+.home-layout-row + .home-layout-row {
+  margin-top: 0.45rem;
+}
+
+.home-layout-row.is-hidden {
+  opacity: 0.62;
+  background: var(--surface-muted);
+}
+
+.home-layout-row__icon,
+.home-layout-row__index {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.home-layout-row__copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.home-layout-row__copy strong {
+  font-size: 0.82rem;
+}
+
+.home-layout-row__copy small {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.home-layout-row__fixed {
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+
+.home-layout-row__count .select {
+  width: 66px;
+  min-height: 34px;
+  padding: 0.3rem 0.5rem;
+}
+
+.home-layout-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
 }
 
 .root-list {
@@ -1305,6 +1620,24 @@ kbd {
 
   .backup-preview {
     grid-template-columns: 1fr;
+  }
+
+  .profile-setting__controls {
+    grid-template-columns: 1fr;
+  }
+
+  .home-layout-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+  }
+
+  .home-layout-row__count {
+    grid-row: 2;
+    grid-column: 2;
+  }
+
+  .home-layout-row__actions {
+    grid-row: 1 / 3;
+    grid-column: 3;
   }
 }
 </style>

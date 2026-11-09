@@ -80,6 +80,11 @@ device serial (private evidence), model, Android API level, and run timestamp.
 - Reauthorize and rescan without losing book identity.
 - Attempt `..`, absolute paths, unsupported formats, and an escaping root path;
   each must fail.
+- Delete a disposable managed SAF book and confirm its verified copy appears
+  below `.granite/trash/<bookId>/`, the original disappears, and a rescan does
+  not list the trash copy.
+- Make the SAF root unavailable during cleanup and confirm the record remains
+  queued rather than producing a tombstone; reauthorize and retry.
 
 ### Multiple roots and migration
 

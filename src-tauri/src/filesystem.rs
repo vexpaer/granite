@@ -13,8 +13,9 @@ use crate::models::{
     WrittenBook,
 };
 use crate::paths::{
-    ensure_within, extension_set, format_from_path, relative_path_string, require_filesystem_root,
-    safe_existing_file, safe_new_file, safe_relative_path, sanitize_filename,
+    create_safe_directory, ensure_within, extension_set, format_from_path, relative_path_string,
+    require_filesystem_root, safe_existing_file, safe_new_file, safe_relative_path,
+    sanitize_filename,
 };
 
 pub const MAX_IPC_FILE_BYTES: u64 = 512 * 1024 * 1024;
@@ -60,6 +61,7 @@ pub fn scan_root(root: &LibraryRoot) -> HostResult<Vec<ScannedFile>> {
     for entry in WalkDir::new(&safe_root.canonical_path)
         .follow_links(false)
         .into_iter()
+        .filter_entry(include_scan_entry)
     {
         let entry = entry.map_err(|error| {
             HostError::Storage(format!(
@@ -104,6 +106,14 @@ pub fn scan_root(root: &LibraryRoot) -> HostResult<Vec<ScannedFile>> {
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
+}
+
+fn include_scan_entry(entry: &walkdir::DirEntry) -> bool {
+    if entry.depth() == 0 || !entry.file_type().is_dir() {
+        return true;
+    }
+    let name = entry.file_name().to_string_lossy();
+    !name.starts_with('.') && !name.eq_ignore_ascii_case("Notebook")
 }
 
 pub fn import_book(root: &LibraryRoot, filename: &str, bytes: &[u8]) -> HostResult<ImportedBook> {
@@ -209,6 +219,56 @@ pub fn write_book(
 pub fn reveal_file(root: &LibraryRoot, relative_path: &str) -> HostResult<bool> {
     let path = safe_existing_file(root, relative_path)?;
     reveal_path(&path)
+}
+
+pub fn trash_book(root: &LibraryRoot, relative_path: &str, book_id: &str) -> HostResult<()> {
+    let source = safe_existing_file(root, relative_path)?;
+    if format_from_path(&source).is_none() {
+        return Err(HostError::Unsupported(
+            "only managed book files can be moved to trash".into(),
+        ));
+    }
+    let safe_root = require_filesystem_root(root, true)?;
+    let source_hash = sha256_file(&source)?;
+    let safe_id = crate::paths::sanitize_component(book_id)?;
+    let trash_relative = Path::new(".granite").join("trash").join(safe_id);
+    let trash_directory = create_safe_directory(&safe_root.canonical_path, &trash_relative)?;
+    let file_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| HostError::InvalidArgs("book filename is not valid Unicode".into()))?;
+    let safe_filename = crate::paths::sanitize_component(file_name)?;
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let destination =
+        trash_directory.join(format!("{timestamp}-{}-{safe_filename}", Uuid::new_v4()));
+    if destination.exists() {
+        return Err(HostError::Conflict(
+            "recoverable trash destination already exists".into(),
+        ));
+    }
+    fs::rename(&source, &destination)
+        .map_err(|error| HostError::io("failed to move book into recoverable trash", error))?;
+
+    let verification = sha256_file(&destination);
+    if verification.as_ref().is_ok_and(|hash| hash == &source_hash) {
+        return Ok(());
+    }
+
+    let restore = fs::rename(&destination, &source);
+    let detail = match (verification, restore) {
+        (_, Ok(())) => "the source was restored".to_owned(),
+        (Ok(_), Err(error)) => format!(
+            "checksum verification failed and the source could not be restored: {error}; the recoverable copy remains at {}",
+            destination.display()
+        ),
+        (Err(error), Err(restore_error)) => format!(
+            "checksum verification failed: {error}; source restoration also failed: {restore_error}; the recoverable copy remains at {}",
+            destination.display()
+        ),
+    };
+    Err(HostError::Storage(format!(
+        "book trash move failed verification; {detail}"
+    )))
 }
 
 #[cfg(target_os = "windows")]
@@ -364,11 +424,8 @@ where
             continue;
         }
         if metadata.is_dir() {
-            let target = destination
-                .canonical_path
-                .join(safe_relative_path(&relative)?);
             if let Err(error) =
-                create_safe_destination_directory(&destination.canonical_path, &target, from)
+                create_safe_destination_directory(&destination.canonical_path, &relative)
             {
                 report.failed.push(MigrationIssue {
                     relative_path: relative.clone(),
@@ -720,30 +777,30 @@ fn prune_file_backups(directory: &Path, keep: usize) {
 
 fn prepare_migration_target(destination_root: &Path, relative: &str) -> HostResult<PathBuf> {
     let relative = safe_relative_path(relative)?;
-    let target = destination_root.join(&relative);
-    let parent = target
+    let file_name = relative
+        .file_name()
+        .ok_or_else(|| HostError::Forbidden("migration target has no file name".into()))?;
+    let parent_relative = relative
         .parent()
         .ok_or_else(|| HostError::Forbidden("migration target has no parent".into()))?;
-    fs::create_dir_all(parent).map_err(|error| {
-        HostError::io("failed to create migration destination directory", error)
-    })?;
-    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
-        HostError::io("failed to validate migration destination directory", error)
-    })?;
-    ensure_within(destination_root, &canonical_parent)?;
+    let parent = create_safe_directory(destination_root, parent_relative)?;
+    let target = parent.join(file_name);
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(HostError::Forbidden(
+                "migration target is an existing symbolic link".into(),
+            ))
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(HostError::io("failed to inspect migration target", error)),
+    }
     Ok(target)
 }
 
-fn create_safe_destination_directory(
-    destination_root: &Path,
-    target: &Path,
-    _source: &LibraryRoot,
-) -> HostResult<()> {
-    fs::create_dir_all(target)
-        .map_err(|error| HostError::io("failed to create migration directory", error))?;
-    let canonical = fs::canonicalize(target)
-        .map_err(|error| HostError::io("failed to validate migration directory", error))?;
-    ensure_within(destination_root, &canonical)
+fn create_safe_destination_directory(destination_root: &Path, relative: &str) -> HostResult<()> {
+    create_safe_directory(destination_root, &safe_relative_path(relative)?)?;
+    Ok(())
 }
 
 fn copy_file_to_new(
@@ -860,6 +917,16 @@ mod tests {
         fs::write(library.path().join("notes.md"), b"md").expect("md");
         fs::create_dir(library.path().join("nested")).expect("nested");
         fs::write(library.path().join("nested/book.txt"), b"txt").expect("txt");
+        fs::create_dir(library.path().join("Notebook")).expect("notebook");
+        fs::write(library.path().join("Notebook/attachment.pdf"), b"pdf").expect("attachment");
+        fs::create_dir_all(library.path().join(".granite/trash/book")).expect("trash");
+        fs::write(
+            library
+                .path()
+                .join(".granite/trash/book/already-trashed.epub"),
+            b"epub",
+        )
+        .expect("trashed book");
         let root = make_default_root(library.path().to_path_buf());
         let files = scan_root(&root).expect("scan");
         let paths: Vec<_> = files
@@ -867,6 +934,24 @@ mod tests {
             .map(|file| file.relative_path.as_str())
             .collect();
         assert_eq!(paths, vec!["book.pdf", "nested/book.txt"]);
+    }
+
+    #[test]
+    fn trash_moves_a_verified_recoverable_copy_and_scan_ignores_it() {
+        let library = tempdir().expect("library");
+        let root = make_default_root(library.path().to_path_buf());
+        let imported = import_book(&root, "Book.epub", b"recoverable book").expect("import");
+
+        trash_book(&root, &imported.relative_path, "book-1").expect("trash");
+        assert!(!library.path().join(&imported.relative_path).exists());
+        assert!(scan_root(&root).expect("scan").is_empty());
+        assert!(WalkDir::new(library.path().join(".granite/trash/book-1"))
+            .into_iter()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry.file_type().is_file()
+                    && fs::read(entry.path()).ok().as_deref() == Some(b"recoverable book")
+            }));
     }
 
     #[test]

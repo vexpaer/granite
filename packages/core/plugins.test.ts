@@ -84,6 +84,25 @@ describe('plugin manifest validation', () => {
     )
   })
 
+  it('rejects plugin IDs that collide with object prototype properties', () => {
+    const result = validateManifest(rawManifest('constructor'))
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ code: 'plugin-id', path: 'id' }),
+    )
+  })
+
+  it('reserves application-owned persistent plugin namespaces', () => {
+    for (const id of ['granite.profiles', 'granite.local-sync-state']) {
+      const result = validateManifest(rawManifest(id))
+      expect(result.valid).toBe(false)
+      expect(result.errors).toContainEqual(
+        expect.objectContaining({ code: 'plugin-id', path: 'id' }),
+      )
+    }
+  })
+
   it('returns a topological dependency order and rejects cycles', () => {
     const first = rawManifest('first.plugin', {
       dependencies: { 'second.plugin': '^2.0.0' },
@@ -116,14 +135,20 @@ describe('plugin manifest validation', () => {
         `sha256-${'0'.repeat(64)}`,
       ),
     ).resolves.toBe(false)
+    await expect(
+      verifyBundleIntegrity(
+        Uint8Array.from([0xfb, 0xff]),
+        'sha256--_8=',
+        async () => Uint8Array.from([0xfb, 0xff]),
+      ),
+    ).resolves.toBe(true)
   })
 
-  it('keeps the example package valid and SRI-verified', async () => {
+  it('keeps the example source and template valid and SRI-consistent', async () => {
     const root = join(process.cwd(), 'packages', 'core', 'examples', 'basic-plugin')
-    const manifest = JSON.parse(
-      await readFile(join(root, 'dist', 'manifest.json'), 'utf8'),
-    )
+    const manifest = JSON.parse(await readFile(join(root, 'manifest.template.json'), 'utf8'))
     const main = await readFile(join(root, 'src', 'main.js'))
+    manifest.integrity = await integrityFor(main.toString('utf8'))
 
     expect(validateManifest(manifest).valid).toBe(true)
     await expect(
@@ -191,6 +216,11 @@ describe('Cordis plugin lifecycle and fault isolation', () => {
             slot: 'settings.pages',
             title: 'Trusted Settings',
           })
+          api.commands.register({
+            id: 'trusted.plugin:open-settings',
+            title: 'Open settings',
+            run() {},
+          })
           expect(() => api.events.emit('other.plugin/started')).toThrow(/namespace/)
           return () => {
             cleanupCount += 1
@@ -215,10 +245,17 @@ describe('Cordis plugin lifecycle and fault isolation', () => {
         pluginId: 'trusted.plugin',
       }),
     ])
+    expect(runtime.commands.list()).toEqual([
+      expect.objectContaining({
+        id: 'trusted.plugin:open-settings',
+        pluginId: 'trusted.plugin',
+      }),
+    ])
 
     await expect(runtime.deactivate('trusted.plugin')).resolves.toBe(true)
     expect(cleanupCount).toBe(2)
     expect(runtime.ui.list()).toEqual([])
+    expect(runtime.commands.list()).toEqual([])
     await runtime.dispose()
   })
 
@@ -253,6 +290,35 @@ describe('Cordis plugin lifecycle and fault isolation', () => {
     expect(runtime.get('good.plugin')?.status).toBe('active')
     expect(failed.status).toBe('failed')
     expect(failed.error).toContain('plugin exploded')
+    await runtime.dispose()
+  })
+
+  it('requires the UI permission before a trusted plugin registers commands', async () => {
+    const runtime = createPluginRuntime()
+    const manifest = normalizedManifest('command.plugin', {
+      permissions: [],
+      contributes: [],
+      trust: 'trusted',
+      ui: { kind: 'esm' },
+    })
+
+    const record = await runtime.activate(manifest, {
+      kind: 'trusted-esm',
+      module: {
+        activate(api: PluginRuntimeApi) {
+          expect(() =>
+            api.commands.register({
+              id: 'command.plugin:run',
+              title: 'Run',
+              run() {},
+            }),
+          ).toThrow(/ui\.register/)
+        },
+      },
+    })
+
+    expect(record.status).toBe('active')
+    expect(runtime.commands.list()).toEqual([])
     await runtime.dispose()
   })
 

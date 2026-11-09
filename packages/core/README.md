@@ -42,6 +42,52 @@ record.
 Use `verifyBundleIntegrity()` with the manifest's SRI value. Hex digests and a bare SHA-256 value
 are not accepted as SRI.
 
+## Application integration
+
+The native transport adapter expects the app's existing `hostCall(op, args)` function:
+
+```ts
+import {
+  createHostProviderTransport,
+  createProvider,
+  createSyncEngine,
+} from './packages/core/index'
+
+const transport = createHostProviderTransport((request) =>
+  hostCall(request.op, request.args),
+)
+const provider = createProvider(profile, transport)
+const engine = createSyncEngine({ provider, deviceId })
+await engine.ensureProtocolDocument({ signal })
+const bytes = await engine.downloadBook(book, { signal })
+```
+
+`createProvider()` binds one immutable profile to list/read/write/delete/stat/range,
+capability, retry, cancellation, conditional-write, and SHA-256 checks. The adapter sends
+`{op:'provider.request', args:{profile,method,key,body:number[],headers}}`. Provider-bound keys
+already include `profile.prefix`, so the host-facing copy carries `prefix:''`; the public provider
+profile and binding ID retain the configured prefix.
+
+Installation should use `previewPluginPackage()`/`previewPluginSource()` and require the returned
+`requiresUserReview` flow before storing the plugin. Runtime activation receives an external trust
+grant and the current granted permissions:
+
+```ts
+const preview = await previewPluginPackage(bytes, {
+  hostApiVersion: '1.0.0',
+  hostPlatform: 'windows',
+})
+await activateInstalled(installedPlugin, hooks, {
+  trusted: persistedUserTrustGrant,
+  hostPlatform: 'windows',
+  safeMode,
+})
+```
+
+`initializeInstalledPlugins()` performs the same default-untrusted activation for enabled plugins.
+`deactivateInstalled()` reverses UI, command, event, and sandbox resources. The reactive
+`pluginUiRegistry` exposes `contributions`, `forSlot(slot)`, and `sandbox(pluginId)`.
+
 ## Platform evidence
 
 Physical Android device verification is explicitly waived by the user on 2026-11-09. This waiver
@@ -53,5 +99,5 @@ prohibited.
 
 ```powershell
 & node_modules/.bin/vitest.cmd run packages/core src/services/plugin-manager.test.ts
-& node_modules/.bin/tsc.cmd --noEmit --pretty false
+npm run build
 ```

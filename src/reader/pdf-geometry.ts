@@ -98,6 +98,20 @@ export function zoomAroundPoint(
   };
 }
 
+export function zoomAndPanBetweenPoints(
+  transform: DocumentTransform,
+  nextScale: number,
+  startPoint: { x: number; y: number },
+  currentPoint: { x: number; y: number },
+): DocumentTransform {
+  const zoomed = zoomAroundPoint(transform, nextScale, startPoint);
+  return {
+    x: zoomed.x + currentPoint.x - startPoint.x,
+    y: zoomed.y + currentPoint.y - startPoint.y,
+    scale: zoomed.scale,
+  };
+}
+
 export function fitWidthScale(
   documentWidth: number,
   viewportWidth: number,

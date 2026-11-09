@@ -20,6 +20,7 @@ import {
   sanitizeMetadataForSync,
   SyncQueue,
   SyncQueueError,
+  validateDeviceSyncDocument,
   verifyDeviceSyncDocument,
   type NoteChange,
   type ReadingProgressHistory,
@@ -212,6 +213,35 @@ describe('safe per-device sync documents', () => {
       }),
     ).rejects.toThrow('own changes')
   })
+
+  it('rejects malformed changes even when the document itself is shaped correctly', () => {
+    const errors = validateDeviceSyncDocument({
+      protocolVersion: 1,
+      deviceId: 'device-a',
+      revision: 1,
+      generatedAt: timestamp,
+      changes: [
+        {
+          id: 'change-1',
+          entityType: 'note',
+          entityId: 'note-1',
+          operation: 'upsert',
+          revision: { counter: -1, deviceId: 'device-b' },
+          checksum: 'digest',
+        },
+      ],
+      tombstones: [],
+      pluginData: {},
+      checksum: 'digest',
+    })
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        'changes.0.revision is invalid',
+        'changes.0.revision belongs to another device',
+      ]),
+    )
+  })
 })
 
 describe('conflict and history merges', () => {
@@ -347,6 +377,23 @@ describe('conflict and history merges', () => {
     expect(merged.pluginData.futurePlugin).toEqual({ schema: 9 })
     expect(merged.conflicts.some((conflict) => conflict.type === 'plugin-data')).toBe(true)
   })
+
+  it('retains prototype-like plugin namespaces without mutating prototypes', async () => {
+    const malicious = JSON.parse(
+      '{"__proto__":{"polluted":true},"constructor":{"safe":true}}',
+    ) as Record<string, unknown>
+    const document = await createDeviceSyncDocument({
+      deviceId: 'device-a',
+      revision: 1,
+      generatedAt: timestamp,
+      pluginData: malicious,
+    })
+    const merged = mergeSyncDocuments(document)
+
+    expect(Object.prototype).not.toHaveProperty('polluted')
+    expect(Object.prototype.hasOwnProperty.call(merged.pluginData, '__proto__')).toBe(true)
+    expect(Object.prototype.hasOwnProperty.call(merged.pluginData, 'constructor')).toBe(true)
+  })
 })
 
 describe('sync policy and queue', () => {
@@ -381,6 +428,12 @@ describe('sync policy and queue', () => {
         object: 'delete',
         bookId: 'book-1',
       }).deleteRemoteObject,
+    ).toBe(true)
+    expect(
+      getSyncPolicyDecision({
+        policy: 'metadata',
+        object: 'plugin-data',
+      }).syncMetadata,
     ).toBe(true)
   })
 

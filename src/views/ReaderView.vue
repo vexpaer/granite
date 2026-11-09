@@ -64,6 +64,7 @@ import {
 } from '../reader/utils';
 import { assertFormat, parseReflowBook, sniffFormat } from '../reader/format';
 import { searchReflowChapters } from '../reader/text';
+import { matchesShortcut } from '../services/shortcuts';
 import {
   readPdfAnnotations,
   writePdfAnnotations,
@@ -299,6 +300,10 @@ async function loadBook(): Promise<void> {
       pdfLoadTask = getDocument({
         data: bytes.slice(),
         useWorkerFetch: true,
+        cMapUrl: '/pdfjs/cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: '/pdfjs/standard_fonts/',
+        wasmUrl: '/pdfjs/wasm/',
       });
       const document = await pdfLoadTask.promise;
       if (disposed) {
@@ -920,14 +925,15 @@ function onAndroidBack(event: Event): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (isEditingTarget(event.target)) return;
+  if (event.isComposing || isEditingTarget(event.target)) return;
   const key = event.key.toLowerCase();
   if (event.key === 'Escape') {
     event.preventDefault();
     handleBack();
     return;
   }
-  if ((event.ctrlKey || event.metaKey) && key === 'f') {
+  const shortcuts = app.settings.shortcuts;
+  if (shortcuts.search && matchesShortcut(event, shortcuts.search)) {
     event.preventDefault();
     togglePanel('search');
     return;
@@ -937,23 +943,30 @@ function onKeydown(event: KeyboardEvent): void {
     pdfSurface.value?.zoomBy(event.key === '-' ? 1 / 1.2 : 1.2);
     return;
   }
-  if (panel.value || selection.value || event.ctrlKey || event.metaKey || event.altKey) return;
-  if (key === 'b') {
+  if (panel.value || selection.value) return;
+  const plainNavigation = !event.ctrlKey && !event.metaKey && !event.altKey;
+  if (shortcuts.bookmark && matchesShortcut(event, shortcuts.bookmark)) {
     event.preventDefault();
     void toggleBookmark();
-  } else if (key === 'f') {
+  } else if (shortcuts.fullscreen && matchesShortcut(event, shortcuts.fullscreen)) {
     event.preventDefault();
     void toggleFullscreen();
-  } else if (['arrowright', 'pagedown', ' '].includes(key)) {
+  } else if (shortcuts.next && matchesShortcut(event, shortcuts.next)) {
     event.preventDefault();
     surfaceNext();
-  } else if (['arrowleft', 'pageup'].includes(key)) {
+  } else if (shortcuts.previous && matchesShortcut(event, shortcuts.previous)) {
     event.preventDefault();
     surfacePrevious();
-  } else if (key === 'home') {
+  } else if (plainNavigation && (key === 'pagedown' || (key === ' ' && !event.shiftKey))) {
+    event.preventDefault();
+    surfaceNext();
+  } else if (plainNavigation && (key === 'pageup' || (key === ' ' && event.shiftKey))) {
+    event.preventDefault();
+    surfacePrevious();
+  } else if (plainNavigation && key === 'home') {
     event.preventDefault();
     surfaceStart();
-  } else if (key === 'end') {
+  } else if (plainNavigation && key === 'end') {
     event.preventDefault();
     surfaceEnd();
   }

@@ -95,6 +95,21 @@ describe('reading analytics', () => {
       ratio: 25 / 30,
       complete: false,
     })
+
+    const ranged = summarizeReadingSessions(sessions, {
+      timeZone: 'UTC',
+      from: '2026-11-09',
+      to: '2026-11-09',
+      today: '2026-11-09',
+    })
+    expect(ranged).toMatchObject({
+      totalActiveMs: 5 * 60_000,
+      sessionCount: 1,
+      bookCount: 1,
+      activeDays: 1,
+      currentStreak: 1,
+      longestStreak: 1,
+    })
   })
 
   it('uses monotonic time and excludes hidden or idle periods', () => {
@@ -150,5 +165,9 @@ describe('reading analytics', () => {
     expect(log.add(value)).toBe(true)
     expect(log.add(value)).toBe(false)
     expect(log.merge([value])).toHaveLength(1)
+
+    const completed = { ...value, activeMs: 90_000 }
+    expect(log.add(completed)).toBe(true)
+    expect(log.values()[0]?.activeMs).toBe(90_000)
   })
 })

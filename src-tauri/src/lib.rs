@@ -5,6 +5,7 @@ mod error;
 mod filesystem;
 mod models;
 mod network;
+#[cfg(not(target_os = "android"))]
 mod notebook;
 mod paths;
 

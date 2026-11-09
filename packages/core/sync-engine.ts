@@ -157,7 +157,7 @@ export class SyncEngine {
       },
       this.digest,
     )
-    const key = `${SYNC_DEVICE_PREFIX}${encodeURIComponent(this.deviceId)}.json`
+    const key = `${SYNC_DEVICE_PREFIX}${this.deviceId}.json`
     const bytes = new TextEncoder().encode(JSON.stringify(document))
     const write = await this.provider.write(key, bytes, {
       contentType: 'application/json',
@@ -251,10 +251,7 @@ export class SyncEngine {
         })
         const text = new TextDecoder().decode(bytes)
         const document = await parseDeviceSyncDocument(text, this.digest)
-        if (
-          `${SYNC_DEVICE_PREFIX}${encodeURIComponent(document.deviceId)}.json` !==
-          entry.key
-        ) {
+        if (`${SYNC_DEVICE_PREFIX}${document.deviceId}.json` !== entry.key) {
           throw new Error('device document path does not match its deviceId')
         }
         documents.push(document)
@@ -286,14 +283,38 @@ export class SyncEngine {
     if (actual.toLowerCase() !== expected) {
       throw new Error('book object checksum does not match its declared SHA-256')
     }
-    return this.provider.write(`${SYNC_OBJECT_PREFIX}${expected}`, bytes, {
-      contentType: 'application/octet-stream',
-      digest: this.digest,
-      signal: options.signal,
-      headers: options.headers,
-      retry: options.retry,
-      ifNoneMatch: '*',
-    })
+    const key = `${SYNC_OBJECT_PREFIX}${expected}`
+    try {
+      return await this.provider.write(key, bytes, {
+        contentType: 'application/octet-stream',
+        digest: this.digest,
+        signal: options.signal,
+        headers: options.headers,
+        retry: options.retry,
+        ifNoneMatch: '*',
+      })
+    } catch (error) {
+      if (
+        !(error instanceof ProviderError) ||
+        (error.status !== 409 && error.status !== 412)
+      ) {
+        throw error
+      }
+      const existing = await this.provider.stat(key, options)
+      if (!existing) throw error
+      await this.provider.read(key, {
+        expectedSha256: expected,
+        digest: this.digest,
+        signal: options.signal,
+        headers: options.headers,
+        retry: options.retry,
+      })
+      return {
+        checksum: expected,
+        status: 200,
+        ...(existing.etag ? { etag: existing.etag } : {}),
+      }
+    }
   }
 
   async downloadBookObject(

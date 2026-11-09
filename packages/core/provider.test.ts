@@ -83,7 +83,7 @@ describe('native provider transport', () => {
     expect(captured).toEqual({
       op: 'provider.request',
       args: {
-        profile: webDavProfile,
+        profile: { ...webDavProfile, prefix: '' },
         method: 'PUT',
         key: 'Granite/file.bin',
         body: [9, 8],
@@ -91,6 +91,23 @@ describe('native provider transport', () => {
       },
     })
     expect([...result.body!]).toEqual([1, 2])
+  })
+
+  it('rejects unsafe endpoints and incomplete provider profiles', () => {
+    const transport = new RecordingTransport(() => response(200))
+
+    expect(() =>
+      createWebDavProvider(
+        { ...webDavProfile, endpoint: 'http://dav.example/base' },
+        transport,
+      ),
+    ).toThrow(/HTTPS/)
+    expect(() =>
+      createWebDavProvider({ ...webDavProfile, username: undefined }, transport),
+    ).toThrow(/username/)
+    expect(() =>
+      createS3Provider({ ...s3Profile, region: undefined }, transport),
+    ).toThrow(/region/)
   })
 
   it('rejects a cancelled host request without waiting for the transport', async () => {
@@ -123,6 +140,18 @@ describe('native provider transport', () => {
     await expect(request).rejects.toMatchObject({ name: 'AbortError' })
 
     finishHostCall?.({ status: 200, headers: {}, body: [1] })
+  })
+
+  it('preserves a 404 raised by the native host as a successful delete', async () => {
+    let calls = 0
+    const transport = createHostProviderTransport(async () => {
+      calls += 1
+      throw Object.assign(new Error('missing'), { status: 404 })
+    })
+    const provider = createWebDavProvider(webDavProfile, transport)
+
+    await expect(provider.remove('missing.txt')).resolves.toBeUndefined()
+    expect(calls).toBe(1)
   })
 })
 
@@ -175,6 +204,16 @@ describe('WebDAV provider', () => {
     await provider.write('a/b.txt', Uint8Array.from([1]))
     await expect(provider.remove('a/missing.txt')).resolves.toBeUndefined()
   })
+
+  it('treats a transport exception carrying HTTP 404 as a successful delete', async () => {
+    const transport = new RecordingTransport(() => {
+      throw Object.assign(new Error('missing'), { status: 404 })
+    })
+    const provider = createWebDavProvider(webDavProfile, transport)
+
+    await expect(provider.remove('missing.txt')).resolves.toBeUndefined()
+    expect(transport.requests).toHaveLength(1)
+  })
 })
 
 describe('S3 provider', () => {
@@ -200,11 +239,23 @@ describe('S3 provider', () => {
       },
     ])
     expect(transport.requests[0].key).toBe(
-      'Granite?list-type=2&prefix=Granite%2Fsync%2Fdevices',
+      '?list-type=2&prefix=Granite%2Fsync%2Fdevices',
     )
 
     await provider.write('objects/sha256/hash', Uint8Array.from([1, 2]))
     expect(transport.requests[1].key).toBe('Granite/objects/sha256/hash')
+  })
+
+  it('passes logical Unicode keys to the native host without double encoding', async () => {
+    const transport = new RecordingTransport(() => response(201))
+    const provider = createWebDavProvider(webDavProfile, transport)
+
+    await provider.write('sync/书 100%.json', Uint8Array.from([1]))
+
+    expect(transport.requests.at(-1)).toMatchObject({
+      method: 'PUT',
+      key: 'Granite/sync/书 100%.json',
+    })
   })
 })
 

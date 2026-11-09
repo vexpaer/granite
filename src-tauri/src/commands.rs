@@ -6,25 +6,30 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
+#[cfg(not(target_os = "android"))]
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use uuid::Uuid;
 
 use crate::credentials;
 use crate::database::Database;
 use crate::error::{HostError, HostResult};
+#[cfg(not(target_os = "android"))]
+use crate::filesystem::atomic_write_path;
 use crate::filesystem::{
-    atomic_write_path, import_book, migrate_roots, read_book, read_file, reveal_file, scan_root,
+    import_book, migrate_roots, read_book, read_file, reveal_file, scan_root, trash_book,
     write_book, MAX_IPC_FILE_BYTES,
 };
 use crate::models::{
     Diagnostics, HostRequest, LibraryRoot, MigrationProgress, PickedBook, ProviderProfile,
 };
 use crate::network;
+#[cfg(not(target_os = "android"))]
 use crate::notebook;
-use crate::paths::{
-    format_from_path, make_default_root, make_picked_root, sanitize_component,
-    validate_library_root,
-};
+#[cfg(not(target_os = "android"))]
+use crate::paths::make_picked_root;
+#[cfg(not(target_os = "android"))]
+use crate::paths::sanitize_component;
+use crate::paths::{format_from_path, make_default_root, validate_library_root};
 
 pub struct HostState {
     database: Arc<Mutex<Database>>,
@@ -121,6 +126,13 @@ async fn dispatch(app: &AppHandle, state: &HostState, request: HostRequest) -> H
             let relative_path = args.string("relativePath")?;
             Ok(Value::Bool(reveal_file(&root, relative_path)?))
         }
+        "book.trash" => {
+            let root = args.root("root")?;
+            let relative_path = args.string("relativePath")?;
+            let book_id = args.string("bookId")?;
+            trash_book(&root, relative_path, book_id)?;
+            Ok(json!({ "trashed": true }))
+        }
         "file.pickBooks" => file_pick_books(app),
         "file.readPaths" => file_read_paths(&args),
         "credential.set" => {
@@ -183,7 +195,13 @@ fn android_should_dispatch(op: &str, args: &Value) -> bool {
 
     if matches!(
         op,
-        "root.scan" | "root.validate" | "book.import" | "book.read" | "book.write" | "book.locate"
+        "root.scan"
+            | "root.validate"
+            | "book.import"
+            | "book.read"
+            | "book.write"
+            | "book.locate"
+            | "book.trash"
     ) {
         return args
             .get("root")
@@ -262,6 +280,7 @@ fn root_default(state: &HostState) -> HostResult<Value> {
     serde_json::to_value(root).map_err(Into::into)
 }
 
+#[cfg(not(target_os = "android"))]
 fn root_pick(app: &AppHandle, state: &HostState, args: &Args) -> HostResult<Value> {
     let mut dialog = app
         .dialog()
@@ -279,6 +298,13 @@ fn root_pick(app: &AppHandle, state: &HostState, args: &Args) -> HostResult<Valu
         root.is_default = is_default;
     }
     serde_json::to_value(validate_library_root(root)).map_err(Into::into)
+}
+
+#[cfg(target_os = "android")]
+fn root_pick(_app: &AppHandle, _state: &HostState, _args: &Args) -> HostResult<Value> {
+    Err(HostError::Unsupported(
+        "root.pick must be handled by the Android native bridge".into(),
+    ))
 }
 
 async fn root_migrate(app: &AppHandle, state: &HostState, args: &Args) -> HostResult<Value> {
@@ -357,6 +383,7 @@ fn book_write(state: &HostState, args: &Args) -> HostResult<Value> {
     .map_err(Into::into)
 }
 
+#[cfg(not(target_os = "android"))]
 fn file_pick_books(app: &AppHandle) -> HostResult<Value> {
     let selected = app
         .dialog()
@@ -371,6 +398,13 @@ fn file_pick_books(app: &AppHandle) -> HostResult<Value> {
         files.push(picked_book_from_path(&path)?);
     }
     serde_json::to_value(files).map_err(Into::into)
+}
+
+#[cfg(target_os = "android")]
+fn file_pick_books(_app: &AppHandle) -> HostResult<Value> {
+    Err(HostError::Unsupported(
+        "file.pickBooks must be handled by the Android native bridge".into(),
+    ))
 }
 
 fn file_read_paths(args: &Args) -> HostResult<Value> {
@@ -423,6 +457,7 @@ fn picked_book_from_path(path: &Path) -> HostResult<PickedBook> {
     })
 }
 
+#[cfg(not(target_os = "android"))]
 fn save_export_dialog(
     app: &AppHandle,
     filename: &str,
@@ -459,6 +494,19 @@ fn save_export_dialog(
     Ok(Value::Bool(true))
 }
 
+#[cfg(target_os = "android")]
+fn save_export_dialog(
+    _app: &AppHandle,
+    _filename: &str,
+    _bytes: &[u8],
+    _title: &str,
+) -> HostResult<Value> {
+    Err(HostError::Unsupported(
+        "native save dialogs must be handled by the Android bridge".into(),
+    ))
+}
+
+#[cfg(not(target_os = "android"))]
 fn export_filename(filename: &str) -> HostResult<String> {
     let name = Path::new(filename)
         .file_name()
@@ -531,6 +579,7 @@ fn diagnostics(state: &HostState) -> HostResult<Value> {
     serde_json::to_value(diagnostics).map_err(Into::into)
 }
 
+#[cfg(not(target_os = "android"))]
 fn file_path_to_path(path: FilePath) -> HostResult<PathBuf> {
     path.into_path().map_err(|error| {
         HostError::Storage(format!(
@@ -579,6 +628,7 @@ impl Args {
         }
     }
 
+    #[cfg(not(target_os = "android"))]
     fn optional_bool(&self, field: &str) -> HostResult<Option<bool>> {
         match self.value.get(field) {
             None | Some(Value::Null) => Ok(None),

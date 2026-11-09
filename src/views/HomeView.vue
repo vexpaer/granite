@@ -16,6 +16,7 @@ import BookCover from '../components/BookCover.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PluginSlots from '../components/PluginSlots.vue';
 import ProgressRing from '../components/ProgressRing.vue';
+import { resolveHomeLayout } from '../components/homeLayout';
 import {
   authorsLabel,
   dateKey,
@@ -35,6 +36,10 @@ import {
 const app = useApp();
 const period = ref<'week' | 'month' | 'year'>('week');
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const homeLayout = computed(() => resolveHomeLayout(app.settings.layout));
+const visibleHomeModules = computed(() =>
+  homeLayout.value.order.filter((id) => !homeLayout.value.hidden.includes(id)),
+);
 
 const readingBooks = computed(() =>
   [...app.books]
@@ -45,15 +50,17 @@ const continueBook = computed(() => readingBooks.value[0]);
 const recentBooks = computed(() =>
   [...app.books]
     .sort((a, b) => Date.parse(b.lastReadAt || b.updatedAt) - Date.parse(a.lastReadAt || a.updatedAt))
-    .slice(0, 5),
+    .slice(0, homeLayout.value.counts.recent),
 );
 const recentNotes = computed(() =>
-  [...app.notes].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 3),
+  [...app.notes]
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, homeLayout.value.counts.notes),
 );
 const pinnedTags = computed(() =>
   [...app.tags]
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-    .slice(0, 6),
+    .slice(0, homeLayout.value.counts.tags),
 );
 
 const rangeStart = computed(() => {
@@ -236,196 +243,204 @@ async function toggleFavorite(bookId: string) {
       </div>
     </section>
 
-    <div v-else class="home-grid home-grid--top">
-      <section class="surface-card continue-card">
-        <div class="section-heading">
-          <h2>继续阅读</h2>
-          <button type="button" @click="app.navigate('bookshelf', 'reading')">阅读中</button>
-        </div>
-        <template v-if="continueBook">
-          <div class="continue-card__body">
-            <button type="button" class="continue-card__cover" @click="openBook(continueBook.id)">
-              <BookCover :book="continueBook" />
-            </button>
-            <div class="continue-card__copy">
-              <button type="button" class="continue-card__title" @click="openBook(continueBook.id)">
-                {{ continueBook.title }}
+    <div class="home-layout">
+      <template v-for="module in visibleHomeModules" :key="module">
+        <section v-if="module === 'continue'" class="surface-card continue-card home-module--continue">
+          <div class="section-heading">
+            <h2>继续阅读</h2>
+            <button type="button" @click="app.navigate('bookshelf', 'reading')">阅读中</button>
+          </div>
+          <template v-if="continueBook">
+            <div class="continue-card__body">
+              <button type="button" class="continue-card__cover" @click="openBook(continueBook.id)">
+                <BookCover :book="continueBook" />
               </button>
-              <p v-if="authorsLabel(continueBook)">{{ authorsLabel(continueBook) }}</p>
-              <blockquote v-if="continueBook.location?.quote">“{{ continueBook.location.quote }}”</blockquote>
-              <div class="continue-card__progress">
-                <ProgressRing
-                  :value="progressFor(continueBook)"
-                  :size="48"
-                  :stroke="4"
-                  :label="`阅读进度 ${Math.round(progressFor(continueBook))}%`"
-                >
-                  {{ Math.round(progressFor(continueBook)) }}%
-                </ProgressRing>
-                <div>
-                  <strong>{{ progressLabel(continueBook) }}</strong>
-                  <span>{{ continueBook.location?.chapter ? `第 ${continueBook.location.chapter} 章` : '上次阅读位置已记录' }}</span>
+              <div class="continue-card__copy">
+                <button type="button" class="continue-card__title" @click="openBook(continueBook.id)">
+                  {{ continueBook.title }}
+                </button>
+                <p v-if="authorsLabel(continueBook)">{{ authorsLabel(continueBook) }}</p>
+                <blockquote v-if="continueBook.location?.quote">“{{ continueBook.location.quote }}”</blockquote>
+                <div class="continue-card__progress">
+                  <ProgressRing
+                    :value="progressFor(continueBook)"
+                    :size="48"
+                    :stroke="4"
+                    :label="`阅读进度 ${Math.round(progressFor(continueBook))}%`"
+                  >
+                    {{ Math.round(progressFor(continueBook)) }}%
+                  </ProgressRing>
+                  <div>
+                    <strong>{{ progressLabel(continueBook) }}</strong>
+                    <span>{{ continueBook.location?.chapter ? `第 ${continueBook.location.chapter} 章` : '上次阅读位置已记录' }}</span>
+                  </div>
                 </div>
               </div>
+              <button class="button button--primary continue-card__action" type="button" @click="readBook(continueBook.id)">
+                <Play :size="16" fill="currentColor" />继续阅读
+              </button>
             </div>
-            <button class="button button--primary continue-card__action" type="button" @click="readBook(continueBook.id)">
-              <Play :size="16" fill="currentColor" />继续阅读
+          </template>
+          <EmptyState
+            v-else
+            compact
+            title="还没有正在阅读的书"
+            description="从书架选择一本书，阅读位置会自动保存。"
+            action-label="前往书架"
+            @action="app.navigate('bookshelf')"
+          />
+        </section>
+
+        <section v-else-if="module === 'recent'" class="surface-card recent-books-card home-module--recent-books">
+          <div class="section-heading">
+            <h2>最近阅读</h2>
+            <button type="button" @click="app.navigate('bookshelf', 'recent')">
+              查看全部 <ArrowRight :size="14" />
             </button>
           </div>
-        </template>
-        <EmptyState
-          v-else
-          compact
-          title="还没有正在阅读的书"
-          description="从书架选择一本书，阅读位置会自动保存。"
-          action-label="前往书架"
-          @action="app.navigate('bookshelf')"
-        />
-      </section>
+          <div v-if="recentBooks.length" class="recent-books">
+            <article v-for="book in recentBooks" :key="book.id" class="recent-book">
+              <button type="button" @click="openBook(book.id)">
+                <BookCover :book="book" compact />
+              </button>
+              <button type="button" class="recent-book__title" @click="openBook(book.id)">{{ book.title }}</button>
+              <span>{{ progressLabel(book) }}</span>
+            </article>
+          </div>
+          <EmptyState
+            v-else
+            compact
+            title="还没有最近阅读"
+            description="打开一本书后，最近记录会出现在这里。"
+            action-label="前往书架"
+            @action="app.navigate('bookshelf')"
+          />
+        </section>
 
-      <section class="surface-card recent-books-card">
-        <div class="section-heading">
-          <h2>最近阅读</h2>
-          <button type="button" @click="app.navigate('bookshelf', 'recent')">
-            查看全部 <ArrowRight :size="14" />
+        <section v-else-if="module === 'notes'" class="surface-card section-card notes-card home-module--recent-notes">
+          <div class="section-heading">
+            <h2>最近笔记</h2>
+            <button type="button" @click="createNote"><Plus :size="14" />新建笔记</button>
+          </div>
+          <div v-if="recentNotes.length" class="data-list">
+            <button
+              v-for="note in recentNotes"
+              :key="note.id"
+              class="data-row note-row"
+              type="button"
+              @click="app.navigate('notebook', note.id)"
+            >
+              <span class="note-row__icon"><NotebookPen :size="17" /></span>
+              <span class="data-row__body">
+                <strong>{{ note.title || '未命名笔记' }}</strong>
+                <span>{{ plainText(note.body) || '空白笔记' }}</span>
+              </span>
+              <time :datetime="note.updatedAt">{{ relativeTime(note.updatedAt) }}</time>
+            </button>
+          </div>
+          <EmptyState
+            v-else
+            compact
+            title="还没有笔记"
+            description="新建一篇笔记，或用 WikiLink 开始连接阅读。"
+            action-label="新建笔记"
+            @action="createNote"
+          />
+        </section>
+
+        <section v-else-if="module === 'statistics'" class="surface-card section-card stats-mini home-module--statistics">
+          <div class="section-heading">
+            <h2>阅读统计</h2>
+            <div class="segmented" role="group" aria-label="统计时间范围">
+              <button v-for="item in [{ id: 'week', label: '周' }, { id: 'month', label: '月' }, { id: 'year', label: '年' }]" :key="item.id" type="button" :class="{ 'is-active': period === item.id }" @click="period = item.id as typeof period">
+                {{ item.label }}
+              </button>
+            </div>
+          </div>
+          <div class="stats-mini__hero">
+            <div>
+              <span>本{{ period === 'week' ? '周' : period === 'month' ? '月' : '年' }}阅读</span>
+              <strong>{{ durationLabel(periodMs) }}</strong>
+            </div>
+            <Sparkles :size="22" aria-hidden="true" />
+          </div>
+          <div v-if="periodSessions.length" class="mini-chart" role="img" :aria-label="`${trend.length} 个时间段的阅读时长趋势`">
+            <span
+              v-for="item in trend"
+              :key="item.label"
+              class="mini-chart__bar"
+              :style="{ height: `${Math.max(7, (item.value / maxTrend) * 100)}%` }"
+              :title="`${item.label}：${durationLabel(item.value)}`"
+            ></span>
+          </div>
+          <div v-else class="mini-chart-empty">
+            <Clock3 :size="20" />
+            <span>此时间范围内还没有阅读会话</span>
+          </div>
+          <div class="stats-mini__facts">
+            <div><strong>{{ finishedCount }}</strong><span>读完</span></div>
+            <div><strong>{{ activeDays }}</strong><span>阅读天</span></div>
+            <div><strong>{{ activeDays ? durationLabel(averageMs, true) : '—' }}</strong><span>日均</span></div>
+          </div>
+          <button class="stats-mini__link" type="button" @click="app.navigate('statistics')">
+            查看统计 <ArrowRight :size="14" />
           </button>
-        </div>
-        <div class="recent-books">
-          <article v-for="book in recentBooks" :key="book.id" class="recent-book">
-            <button type="button" @click="openBook(book.id)">
-              <BookCover :book="book" compact />
-            </button>
-            <button type="button" class="recent-book__title" @click="openBook(book.id)">{{ book.title }}</button>
-            <span>{{ progressLabel(book) }}</span>
-          </article>
-        </div>
-      </section>
-    </div>
+        </section>
 
-    <div class="home-grid home-grid--middle">
-      <section class="surface-card section-card notes-card">
-        <div class="section-heading">
-          <h2>最近笔记</h2>
-          <button type="button" @click="createNote"><Plus :size="14" />新建笔记</button>
-        </div>
-        <div v-if="recentNotes.length" class="data-list">
-          <button
-            v-for="note in recentNotes"
-            :key="note.id"
-            class="data-row note-row"
-            type="button"
-            @click="app.navigate('notebook', note.id)"
-          >
-            <span class="note-row__icon"><NotebookPen :size="17" /></span>
-            <span class="data-row__body">
-              <strong>{{ note.title || '未命名笔记' }}</strong>
-              <span>{{ plainText(note.body) || '空白笔记' }}</span>
-            </span>
-            <time :datetime="note.updatedAt">{{ relativeTime(note.updatedAt) }}</time>
-          </button>
-        </div>
-        <EmptyState
-          v-else
-          compact
-          title="还没有笔记"
-          description="新建一篇笔记，或用 WikiLink 开始连接阅读。"
-          action-label="新建笔记"
-          @action="createNote"
-        />
-      </section>
+        <section v-else-if="module === 'goal'" class="surface-card section-card goal-card home-module--goal">
+          <div class="section-heading">
+            <h2>今日目标</h2>
+            <button type="button" @click="app.navigate('statistics')">调整目标</button>
+          </div>
+          <div class="goal-card__main">
+            <ProgressRing :value="goalPercent" :size="134" :stroke="11" :label="`今日目标完成 ${Math.round(goalPercent)}%`">
+              <strong>{{ Math.round(goalPercent) }}%</strong>
+              <small>今日</small>
+            </ProgressRing>
+            <div class="goal-card__copy">
+              <span>已完成</span>
+              <strong>{{ durationLabel(todayMs, true) }}</strong>
+              <span>目标 {{ app.settings.dailyGoal }} 分钟</span>
+              <p v-if="goalRemaining">{{ durationLabel(goalRemaining, true) }}后完成</p>
+              <p v-else>今日目标已完成</p>
+            </div>
+          </div>
+        </section>
 
-      <section class="surface-card section-card stats-mini">
-        <div class="section-heading">
-          <h2>阅读统计</h2>
-          <div class="segmented" role="group" aria-label="统计时间范围">
-            <button v-for="item in [{ id: 'week', label: '周' }, { id: 'month', label: '月' }, { id: 'year', label: '年' }]" :key="item.id" type="button" :class="{ 'is-active': period === item.id }" @click="period = item.id as typeof period">
-              {{ item.label }}
+        <section v-else-if="module === 'tags'" class="surface-card tags-strip home-module--tags">
+          <div class="section-heading">
+            <h2>我的标签</h2>
+            <button type="button" @click="app.navigate('tags')">管理标签 <ArrowRight :size="14" /></button>
+          </div>
+          <div v-if="pinnedTags.length" class="tags-strip__items">
+            <button
+              v-for="tag in pinnedTags"
+              :key="tag.id"
+              class="home-tag"
+              type="button"
+              :style="{ '--tag-color': tag.color }"
+              @click="app.navigate('tag-results', tag.id)"
+            >
+              <span class="home-tag__dot"></span>
+              <span># {{ tag.name }}</span>
+              <strong>{{ tagCount(tag.id) }}</strong>
             </button>
           </div>
-        </div>
-        <div class="stats-mini__hero">
-          <div>
-            <span>本{{ period === 'week' ? '周' : period === 'month' ? '月' : '年' }}阅读</span>
-            <strong>{{ durationLabel(periodMs) }}</strong>
-          </div>
-          <Sparkles :size="22" aria-hidden="true" />
-        </div>
-        <div v-if="periodSessions.length" class="mini-chart" role="img" :aria-label="`${trend.length} 个时间段的阅读时长趋势`">
-          <span
-            v-for="item in trend"
-            :key="item.label"
-            class="mini-chart__bar"
-            :style="{ height: `${Math.max(7, (item.value / maxTrend) * 100)}%` }"
-            :title="`${item.label}：${durationLabel(item.value)}`"
-          ></span>
-        </div>
-        <div v-else class="mini-chart-empty">
-          <Clock3 :size="20" />
-          <span>此时间范围内还没有阅读会话</span>
-        </div>
-        <div class="stats-mini__facts">
-          <div><strong>{{ finishedCount }}</strong><span>读完</span></div>
-          <div><strong>{{ activeDays }}</strong><span>阅读天</span></div>
-          <div><strong>{{ activeDays ? durationLabel(averageMs, true) : '—' }}</strong><span>日均</span></div>
-        </div>
-        <button class="stats-mini__link" type="button" @click="app.navigate('statistics')">
-          查看统计 <ArrowRight :size="14" />
-        </button>
-      </section>
-
-      <section class="surface-card section-card goal-card">
-        <div class="section-heading">
-          <h2>今日目标</h2>
-          <button type="button" @click="app.navigate('statistics')">调整目标</button>
-        </div>
-        <div class="goal-card__main">
-          <ProgressRing :value="goalPercent" :size="134" :stroke="11" :label="`今日目标完成 ${Math.round(goalPercent)}%`">
-            <strong>{{ Math.round(goalPercent) }}%</strong>
-            <small>今日</small>
-          </ProgressRing>
-          <div class="goal-card__copy">
-            <span>已完成</span>
-            <strong>{{ durationLabel(todayMs, true) }}</strong>
-            <span>目标 {{ app.settings.dailyGoal }} 分钟</span>
-            <p v-if="goalRemaining">{{ durationLabel(goalRemaining, true) }}后完成</p>
-            <p v-else>今日目标已完成</p>
-          </div>
-        </div>
-      </section>
+          <EmptyState
+            v-else
+            compact
+            title="还没有标签"
+            description="标签可以同时整理书籍和笔记。"
+            action-label="创建标签"
+            @action="app.navigate('tags')"
+          />
+        </section>
+      </template>
     </div>
 
     <div class="home-plugin-slot">
       <PluginSlots slot="app.dashboard" />
     </div>
-
-    <section class="surface-card tags-strip">
-      <div class="section-heading">
-        <h2>我的标签</h2>
-        <button type="button" @click="app.navigate('tags')">管理标签 <ArrowRight :size="14" /></button>
-      </div>
-      <div v-if="pinnedTags.length" class="tags-strip__items">
-        <button
-          v-for="tag in pinnedTags"
-          :key="tag.id"
-          class="home-tag"
-          type="button"
-          :style="{ '--tag-color': tag.color }"
-          @click="app.navigate('tag-results', tag.id)"
-        >
-          <span class="home-tag__dot"></span>
-          <span># {{ tag.name }}</span>
-          <strong>{{ tagCount(tag.id) }}</strong>
-        </button>
-      </div>
-      <EmptyState
-        v-else
-        compact
-        title="还没有标签"
-        description="标签可以同时整理书籍和笔记。"
-        action-label="创建标签"
-        @action="app.navigate('tags')"
-      />
-    </section>
 
     <section v-if="app.books.length" class="home-footnote">
       <BookOpen :size="15" />
@@ -541,18 +556,29 @@ async function toggleFavorite(bookId: string) {
   line-height: 1.75;
 }
 
-.home-grid {
+.home-layout {
   display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 1rem;
-}
-
-.home-grid--top {
-  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
-}
-
-.home-grid--middle {
-  grid-template-columns: minmax(320px, 1.1fr) minmax(310px, 0.9fr) minmax(260px, 0.72fr);
   align-items: stretch;
+}
+
+.home-module--continue {
+  grid-column: span 7;
+}
+
+.home-module--recent-books {
+  grid-column: span 5;
+}
+
+.home-module--recent-notes,
+.home-module--statistics,
+.home-module--goal {
+  grid-column: span 4;
+}
+
+.home-module--tags {
+  grid-column: 1 / -1;
 }
 
 .continue-card,
@@ -897,19 +923,19 @@ blockquote {
   margin-left: auto;
 }
 
-@media (max-width: 1320px) {
-  .home-grid--middle {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .goal-card {
+@media (max-width: 1180px) {
+  .home-module--continue,
+  .home-module--recent-books {
     grid-column: 1 / -1;
   }
-}
 
-@media (max-width: 1060px) {
-  .home-grid--top {
-    grid-template-columns: 1fr;
+  .home-module--recent-notes,
+  .home-module--statistics {
+    grid-column: span 6;
+  }
+
+  .home-module--goal {
+    grid-column: 1 / -1;
   }
 }
 
@@ -934,12 +960,17 @@ blockquote {
     right: 1rem;
   }
 
-  .home-grid--middle {
+  .home-layout {
     grid-template-columns: 1fr;
   }
 
-  .goal-card {
-    grid-column: auto;
+  .home-module--continue,
+  .home-module--recent-books,
+  .home-module--recent-notes,
+  .home-module--statistics,
+  .home-module--goal,
+  .home-module--tags {
+    grid-column: 1;
   }
 
   .home-first-run {

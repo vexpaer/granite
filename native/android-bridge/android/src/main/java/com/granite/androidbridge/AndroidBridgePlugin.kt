@@ -140,6 +140,7 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
             "book.read",
             "book.write",
             "book.locate",
+            "book.trash",
             "credential.set",
             "credential.delete",
             "share.consume",
@@ -254,7 +255,7 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
     @ActivityCallback
     fun rootPickerResult(invoke: Invoke, result: ActivityResult) {
         if (result.resultCode != Activity.RESULT_OK) {
-            invoke.resolveObject(null)
+            invoke.resolve()
             return
         }
         val intent = result.data
@@ -390,7 +391,7 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
-    private fun dispatchIo(op: String, args: JsonNode): Any? {
+    private fun dispatchIo(op: String, args: JsonNode): Any {
         return when (op) {
             "root.default" -> defaultStorage.rootObject()
             "root.scan" -> saf.scan(requiredRoot(args))
@@ -427,6 +428,11 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
             "book.locate" -> saf.locateBook(
                 requiredRoot(args),
                 requiredString(args, "relativePath"),
+            )
+            "book.trash" -> saf.trashBook(
+                requiredRoot(args),
+                requiredString(args, "relativePath"),
+                requiredString(args, "bookId"),
             )
             "credential.set" -> {
                 val id = requiredString(args, "id")
@@ -540,10 +546,6 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
         val count = shareQueue.pollFirst() ?: return
         pendingShare = null
         invoke.resolve(JSObject().put("count", count))
-    }
-
-    private fun resolveOnMain(invoke: Invoke, value: Any?) {
-        activity.runOnUiThread { invoke.resolveObject(value) }
     }
 
     private fun rejectSafely(invoke: Invoke, exception: Exception, fallback: String) {

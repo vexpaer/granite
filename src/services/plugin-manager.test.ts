@@ -2,15 +2,19 @@
 
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import JSZip from 'jszip'
 import type { InstalledPlugin } from '../types'
 import {
   activateInstalled,
   deactivateInstalled,
   disposePluginManager,
   initializedPlugins,
+  previewPluginManifest,
+  previewPluginPackage,
+  pluginUiContributions,
 } from './plugin-manager'
 
-function sri(source: string): string {
+function sri(source: string | Uint8Array): string {
   return `sha256-${createHash('sha256').update(source).digest('base64')}`
 }
 
@@ -85,6 +89,12 @@ class FakeWorker {
 
   terminate(): void {}
 
+  sendFromPlugin(data: Record<string, unknown>): void {
+    this.emit('message', {
+      data: { ...data, token: this.token },
+    } as MessageEvent)
+  }
+
   private emit(type: string, event: Event): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event)
   }
@@ -148,6 +158,18 @@ async function waitForIframe(pluginId: string): Promise<HTMLIFrameElement> {
   throw new Error('sandbox iframe was not created')
 }
 
+async function waitForPosted(
+  worker: FakeWorker,
+  predicate: (message: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const message = worker.posted.find(predicate)
+    if (message) return message
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+  }
+  throw new Error('expected sandbox worker message was not posted')
+}
+
 describe('Granite plugin manager', () => {
   beforeEach(() => {
     FakeWorker.instances = []
@@ -198,6 +220,83 @@ describe('Granite plugin manager', () => {
     await expect(deactivateInstalled(plugin.id)).resolves.toBe(true)
   })
 
+  it('normalizes install source and ignores a manifest self-trust claim', async () => {
+    const plugin = installedPlugin(['ui.register'], ['ui.register'])
+    plugin.manifest = {
+      ...plugin.manifest,
+      source: {
+        kind: 'builtin',
+        uri: 'https://plugins.example.test/self-claimed.zip',
+      },
+      trust: 'trusted',
+      ui: { kind: 'worker' },
+    }
+
+    const preview = previewPluginManifest(plugin.manifest)
+    expect(preview.valid).toBe(true)
+    expect(preview.manifest).toMatchObject({
+      source: { kind: 'local' },
+      trust: 'untrusted',
+      ui: { kind: 'worker' },
+    })
+
+    const record = await activateInstalled(plugin, {})
+    const activation = FakeWorker.instances[0]!.posted.find(
+      (message) => message.type === 'activate',
+    )
+    expect(record.trusted).toBe(false)
+    expect(activation).toMatchObject({
+      manifest: {
+        source: { kind: 'local' },
+        trust: 'untrusted',
+        ui: { kind: 'worker' },
+      },
+    })
+  })
+
+  it('bounds the decompressed plugin bundle before exposing it', async () => {
+    const bundle = new Uint8Array(20 * 1024 * 1024 + 1)
+    const manifest = {
+      schemaVersion: 1,
+      id: 'archive.bomb',
+      name: 'Archive bomb',
+      version: '1.0.0',
+      apiVersion: '^1.0.0',
+      main: 'main.js',
+      dependencies: {},
+      optionalDependencies: {},
+      permissions: [],
+      contributes: [],
+      platforms: ['windows', 'android'],
+      author: 'Granite',
+      license: 'MIT',
+      integrity: sri(bundle),
+      source: { kind: 'user', uri: 'local-file' },
+      trust: 'untrusted',
+      ui: { kind: 'worker' },
+    }
+    const zip = new JSZip()
+    zip.file('manifest.json', JSON.stringify(manifest))
+    zip.file('main.js', bundle)
+    const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
+
+    await expect(previewPluginPackage(bytes)).rejects.toThrow(/extraction limit/)
+  })
+
+  it('installs network and nested-worker guards before a worker plugin loads', async () => {
+    const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'])
+    await activateInstalled(plugin, {})
+    const worker = FakeWorker.instances[0]!
+    const source = await blobText(blobs.get(worker.source)!)
+
+    expect(source).toContain("graniteBlockProperty(globalThis, 'fetch'")
+    expect(source).toContain("'WebSocket'")
+    expect(source).toContain("'Worker'")
+    expect(source.indexOf('graniteBlockProperty(globalThis')).toBeLessThan(
+      source.indexOf('let pluginModule'),
+    )
+  })
+
   it('delivers only the owning plugin namespace to an untrusted sandbox', async () => {
     const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'])
     let forwardEvent:
@@ -214,7 +313,13 @@ describe('Granite plugin manager', () => {
     })
     const worker = FakeWorker.instances[0]!
 
-    forwardEvent?.('plugin:manager.example/own-event', { allowed: true })
+    forwardEvent?.('plugin:manager.example/own-event', {
+      schemaVersion: 1,
+      eventId: 'event-1',
+      name: 'plugin:manager.example/own-event',
+      at: '2026-11-09T00:00:00.000Z',
+      payload: { allowed: true },
+    })
     forwardEvent?.('plugin:other.example/private-event', { secret: 'not-for-you' })
     forwardEvent?.('library.private-event', { secret: 'app-only' })
 
@@ -226,6 +331,108 @@ describe('Granite plugin manager', () => {
         token: expect.any(String),
       },
     ])
+  })
+
+  it('continues teardown when a host event disposer throws', async () => {
+    const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'])
+    await activateInstalled(plugin, {
+      events: {
+        emit: () => undefined,
+        onAny: () => () => {
+          throw new Error('host cleanup failed')
+        },
+      },
+    })
+
+    await expect(deactivateInstalled(plugin.id)).resolves.toBe(true)
+    expect(initializedPlugins.some((entry) => entry.id === plugin.id)).toBe(false)
+  })
+
+  it('retains platform targeting for sandbox UI contributions', async () => {
+    const plugin = installedPlugin(['ui.register'], ['ui.register'])
+    await activateInstalled(plugin, {})
+    const worker = FakeWorker.instances[0]!
+
+    worker.sendFromPlugin({
+      type: 'host-request',
+      id: 50,
+      method: 'ui.register',
+      args: [
+        {
+          id: 'manager.example:sidebar',
+          type: 'page',
+          slot: 'app.sidebar',
+          title: 'Android sidebar',
+          platforms: ['android'],
+          platformsAllowed: ['android'],
+        },
+      ],
+    })
+    await waitForPosted(
+      worker,
+      (message) => message.type === 'host-response' && message.id === 50,
+    )
+
+    expect(pluginUiContributions).toContainEqual(
+      expect.objectContaining({
+        id: 'manager.example:sidebar',
+        pluginId: 'manager.example',
+        platforms: ['android'],
+        platformsAllowed: ['android'],
+      }),
+    )
+  })
+
+  it('checks the UI permission before accepting sandbox command registration', async () => {
+    const plugin = installedPlugin([], ['ui.register'])
+    await activateInstalled(plugin, {})
+    const worker = FakeWorker.instances[0]!
+
+    worker.sendFromPlugin({
+      type: 'host-request',
+      id: 51,
+      method: 'commands.register',
+      args: [{ id: 'manager.example:open', title: 'Open' }],
+    })
+    const response = await waitForPosted(
+      worker,
+      (message) => message.type === 'host-response' && message.id === 51,
+    )
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('ui.register'),
+    })
+  })
+
+  it('rejects prototype-colliding storage keys before invoking the host', async () => {
+    const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'])
+    const storageSet = vi.fn(async () => undefined)
+    await activateInstalled(plugin, {
+      storage: {
+        get: async () => undefined,
+        set: storageSet,
+        remove: async () => undefined,
+      },
+    })
+    const worker = FakeWorker.instances[0]!
+
+    worker.sendFromPlugin({
+      type: 'host-request',
+      id: 52,
+      method: 'storage.set',
+      args: ['constructor', { polluted: true }],
+    })
+    const response = await waitForPosted(
+      worker,
+      (message) => message.type === 'host-response' && message.id === 52,
+    )
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('safe namespaced key'),
+    })
+    expect(storageSet).not.toHaveBeenCalled()
   })
 
   it('bounds teardown when a worker never acknowledges deactivation', async () => {

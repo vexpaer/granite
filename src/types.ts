@@ -1,18 +1,209 @@
-export type Format = 'epub'|'pdf'|'txt'|'mobi';
-export interface ReaderLocation { format?:Format; progress:number; chapter?:number; offset?:number; cfi?:string; page?:number; x?:number; y?:number; scale?:number; rotation?:number; quote?:string; updatedAt?:string; }
-export interface ReaderSettings { fontFamily:string; fontSize:number; lineHeight:number; paragraphSpacing:number; margin:number; width:number; theme:'paper'|'sepia'|'dark'; mode:'scroll'|'paginated'; encoding:string; keepAwake:boolean; wheelThreshold:number; }
-export interface Book { id:string; title:string; authors:string[]; format:Format; sha256:string; size:number; rootId:string; relativePath:string; managed:boolean; available:boolean; cover?:string; description?:string; publisher?:string; isbn?:string; doi?:string; series?:string; language?:string; publishedAt?:string; status:'unread'|'reading'|'finished'; favorite:boolean; tagIds:string[]; collectionIds:string[]; location?:ReaderLocation; readerSettings?:Partial<ReaderSettings>; createdAt:string; updatedAt:string; lastReadAt?:string; cloudState?:string; }
-export interface Note { id:string; title:string; body:string; folder:string; tagIds:string[]; bookId?:string; quote?:string; location?:ReaderLocation; attachments?:{name:string;path:string;data?:string}[]; createdAt:string; updatedAt:string; conflictOf?:string; }
-export interface Tag { id:string; name:string; color:string; pinned:boolean; createdAt:string; updatedAt:string; }
-export interface Collection { id:string; name:string; }
-export interface LibraryRoot { id:string; displayName:string; path:string; kind:'filesystem'|'saf'|'browser'; permission:'granted'|'denied'|'unavailable'|'readonly'; enabled:boolean; isDefault:boolean; readonly:boolean; scanState:'idle'|'scanning'|'error'; lastValidatedAt?:string; }
-export interface Annotation { id:string; bookId:string; type:'bookmark'|'highlight'|'underline'|'note'|'ink'; text:string; note:string; color:string; location:ReaderLocation; createdAt:string; updatedAt:string; rects?:number[][]; ink?:number[][]; }
-export interface ReadingSession { id:string; deviceId:string; bookId:string; startedAt:string; endedAt:string; activeMs:number; startLocation?:ReaderLocation; endLocation?:ReaderLocation; pauseReason?:string; }
-export interface ProviderProfile { id:string; type:'webdav'|'s3'; name:string; endpoint:string; username?:string; region?:string; bucket?:string; prefix:string; credentialId:string; accessKeyId?:string; }
-export interface AppSettings { username:string; theme:'light'|'dark'|'system'; density:'comfortable'|'compact'; language:'zh-CN'|'en'; background?:string; dailyGoal:number; idleMinutes:number; reader:ReaderSettings; provider?:ProviderProfile; syncPolicy:'full'|'metadata'|'selected'|'on-demand'; syncBookIds:string[]; syncCollectionIds:string[]; profile:string; sidebarExpanded:boolean; shortcuts:Record<string,string>; layout:Record<string,unknown>; }
-export interface InstalledPlugin { id:string; name:string; version:string; enabled:boolean; permissions:string[]; description?:string; error?:string; manifest?:Record<string,unknown>; bundle?:string; }
-export interface ImportResult { filename:string; status:'success'|'duplicate'|'error'|'cancelled'; message?:string; bookId?:string; }
-export interface SyncHistory { id:string; at:string; status:'success'|'error'|'cancelled'; message:string; }
-export interface SyncConflict { id:string; type:string; entityId:string; local:unknown; remote:unknown; deviceId:string; at:string; }
-export interface Tombstone { id:string; entityType:string; entityId:string; hash?:string; at:string; deviceId:string; revision:number; }
-export interface AppData { schemaVersion:number; deviceId:string; revision:number; books:Book[]; notes:Note[]; tags:Tag[]; collections:Collection[]; roots:LibraryRoot[]; sessions:ReadingSession[]; annotations:Annotation[]; settings:AppSettings; plugins:InstalledPlugin[]; tombstones:Tombstone[]; syncHistory:SyncHistory[]; conflicts:SyncConflict[]; pluginData:Record<string,unknown>; }
+export type Format = "epub" | "pdf" | "txt" | "mobi";
+export interface ReaderLocation {
+  format?: Format;
+  progress: number;
+  chapter?: number;
+  offset?: number;
+  cfi?: string;
+  page?: number;
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotation?: number;
+  quote?: string;
+  updatedAt?: string;
+}
+export interface ReaderSettings {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  paragraphSpacing: number;
+  margin: number;
+  width: number;
+  theme: "paper" | "sepia" | "dark";
+  mode: "scroll" | "paginated";
+  encoding: string;
+  keepAwake: boolean;
+  wheelThreshold: number;
+}
+export interface Book {
+  id: string;
+  title: string;
+  authors: string[];
+  format: Format;
+  sha256: string;
+  size: number;
+  rootId: string;
+  relativePath: string;
+  managed: boolean;
+  available: boolean;
+  cover?: string;
+  description?: string;
+  publisher?: string;
+  isbn?: string;
+  doi?: string;
+  series?: string;
+  language?: string;
+  publishedAt?: string;
+  status: "unread" | "reading" | "finished";
+  favorite: boolean;
+  tagIds: string[];
+  collectionIds: string[];
+  location?: ReaderLocation;
+  readerSettings?: Partial<ReaderSettings>;
+  createdAt: string;
+  updatedAt: string;
+  lastReadAt?: string;
+  cloudState?: string;
+}
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  folder: string;
+  tagIds: string[];
+  bookId?: string;
+  quote?: string;
+  location?: ReaderLocation;
+  attachments?: { name: string; path: string; data?: string }[];
+  createdAt: string;
+  updatedAt: string;
+  conflictOf?: string;
+}
+export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface Collection {
+  id: string;
+  name: string;
+}
+export interface LibraryRoot {
+  id: string;
+  displayName: string;
+  path: string;
+  kind: "filesystem" | "saf" | "browser";
+  permission: "granted" | "denied" | "unavailable" | "readonly";
+  enabled: boolean;
+  isDefault: boolean;
+  readonly: boolean;
+  scanState: "idle" | "scanning" | "error";
+  lastValidatedAt?: string;
+}
+export interface Annotation {
+  id: string;
+  bookId: string;
+  type: "bookmark" | "highlight" | "underline" | "note" | "ink";
+  text: string;
+  note: string;
+  color: string;
+  location: ReaderLocation;
+  createdAt: string;
+  updatedAt: string;
+  rects?: number[][];
+  ink?: number[][];
+}
+export interface ReadingSession {
+  id: string;
+  deviceId: string;
+  bookId: string;
+  startedAt: string;
+  endedAt: string;
+  activeMs: number;
+  startLocation?: ReaderLocation;
+  endLocation?: ReaderLocation;
+  pauseReason?: string;
+}
+export interface ProviderProfile {
+  id: string;
+  type: "webdav" | "s3";
+  name: string;
+  endpoint: string;
+  username?: string;
+  region?: string;
+  bucket?: string;
+  prefix: string;
+  credentialId: string;
+  accessKeyId?: string;
+}
+export interface AppSettings {
+  username: string;
+  theme: "light" | "dark" | "system";
+  density: "comfortable" | "compact";
+  language: "zh-CN" | "en";
+  background?: string;
+  dailyGoal: number;
+  idleMinutes: number;
+  reader: ReaderSettings;
+  provider?: ProviderProfile;
+  syncPolicy: "full" | "metadata" | "selected" | "on-demand";
+  syncBookIds: string[];
+  syncCollectionIds: string[];
+  profile: string;
+  sidebarExpanded: boolean;
+  shortcuts: Record<string, string>;
+  layout: Record<string, unknown>;
+}
+export interface InstalledPlugin {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  permissions: string[];
+  description?: string;
+  error?: string;
+  manifest?: Record<string, unknown>;
+  bundle?: string;
+}
+export interface ImportResult {
+  filename: string;
+  status: "success" | "duplicate" | "error" | "cancelled";
+  message?: string;
+  bookId?: string;
+}
+export interface SyncHistory {
+  id: string;
+  at: string;
+  status: "success" | "error" | "cancelled";
+  message: string;
+}
+export interface SyncConflict {
+  id: string;
+  type: string;
+  entityId: string;
+  local: unknown;
+  remote: unknown;
+  deviceId: string;
+  at: string;
+}
+export interface Tombstone {
+  id: string;
+  entityType: string;
+  entityId: string;
+  hash?: string;
+  at: string;
+  deviceId: string;
+  revision: number;
+}
+export interface AppData {
+  schemaVersion: number;
+  deviceId: string;
+  revision: number;
+  books: Book[];
+  notes: Note[];
+  tags: Tag[];
+  collections: Collection[];
+  roots: LibraryRoot[];
+  sessions: ReadingSession[];
+  annotations: Annotation[];
+  settings: AppSettings;
+  plugins: InstalledPlugin[];
+  tombstones: Tombstone[];
+  syncHistory: SyncHistory[];
+  conflicts: SyncConflict[];
+  pluginData: Record<string, unknown>;
+}

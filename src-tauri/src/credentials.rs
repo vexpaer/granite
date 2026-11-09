@@ -1,7 +1,9 @@
 use crate::error::{HostError, HostResult};
 
+#[cfg(any(target_os = "windows", test))]
 const SERVICE_NAME: &str = "app.granite.reader.credentials";
 
+#[cfg(any(target_os = "windows", test))]
 fn validate_credential_id(id: &str) -> HostResult<()> {
     if id.trim().is_empty() || id.len() > 1024 || id.chars().any(char::is_control) {
         return Err(HostError::InvalidArgs(
@@ -70,7 +72,7 @@ pub fn delete_credential(_id: &str) -> HostResult<()> {
     ))
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "android")))]
 pub(crate) fn resolve_secret(_id: &str) -> HostResult<String> {
     Err(HostError::Unsupported(
         "desktop credential storage is unavailable on this platform".into(),

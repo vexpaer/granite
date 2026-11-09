@@ -38,6 +38,11 @@ const activeRoute = computed(() => {
 
 const activeShelf = computed(() => String(app.shelfFilter || app.route.id || 'all'));
 const collapsedFinal = computed(() => props.collapsed);
+const sidebarStyle = computed(() => {
+  const requested = Number(app.settings.layout?.sidebarWidth);
+  const width = Number.isFinite(requested) ? Math.min(320, Math.max(220, requested)) : 256;
+  return { '--sidebar-width': `${width}px` };
+});
 
 function selectTop(route: string) {
   if (route === 'bookshelf') {
@@ -53,7 +58,7 @@ function selectShelf(id: string) {
 </script>
 
 <template>
-  <aside class="app-sidebar" :class="{ 'app-sidebar--collapsed': collapsedFinal }">
+  <aside class="app-sidebar" :class="{ 'app-sidebar--collapsed': collapsedFinal }" :style="sidebarStyle">
     <div class="app-sidebar__mountain" aria-hidden="true"></div>
     <div class="app-sidebar__wash" aria-hidden="true"></div>
     <div class="app-sidebar__content">

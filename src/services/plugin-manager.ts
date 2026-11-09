@@ -95,6 +95,11 @@ export interface PluginUiEntry extends RegisteredUiContribution {
 
 export interface PreviewPluginOptions extends ActivateInstalledOptions {
   hostApiVersion?: string
+  maxBytes?: number
+  actualSource?: {
+    kind: 'local' | 'url'
+    uri?: string
+  }
 }
 
 export interface PluginPackagePreview {
@@ -127,6 +132,10 @@ function manifestRecord(plugin: InstalledPlugin): Record<string, unknown> {
 function executionManifest(
   rawManifest: Record<string, unknown>,
   trusted: boolean,
+  actualSource: PreviewPluginOptions['actualSource'] = {
+    kind: 'local',
+    uri: 'installed-package',
+  },
 ): Record<string, unknown> {
   const requestedUi =
     rawManifest.ui && typeof rawManifest.ui === 'object'
@@ -139,6 +148,12 @@ function executionManifest(
       : 'iframe'
   return {
     ...rawManifest,
+    source: {
+      kind: actualSource.kind,
+      uri:
+        actualSource.uri ??
+        (actualSource.kind === 'local' ? 'installed-package' : undefined),
+    },
     trust: trusted ? 'trusted' : 'untrusted',
     ui: {
       ...(requestedUi ?? {}),
@@ -173,7 +188,7 @@ export function previewPluginManifest(
   options: PreviewPluginOptions = {},
 ): ManifestValidationResult {
   const trusted = options.trusted === true
-  return validateManifest(executionManifest(rawManifest, trusted), {
+  return validateManifest(executionManifest(rawManifest, trusted, options.actualSource), {
     hostApiVersion: options.hostApiVersion,
     hostPlatform: options.hostPlatform ?? currentPluginPlatform(),
   })
@@ -290,6 +305,12 @@ function registerRemoteContribution(pluginId: string, input: unknown): boolean {
       icon: contribution.icon,
       order: contribution.order,
       props: contribution.props ? structuredClone(contribution.props) : undefined,
+      ...(contribution.platforms
+        ? { platforms: [...contribution.platforms] }
+        : {}),
+      ...(contribution.platformsAllowed
+        ? { platformsAllowed: [...contribution.platformsAllowed] }
+        : {}),
       pluginId,
     }),
   )
@@ -301,6 +322,21 @@ function stringArgument(args: readonly unknown[], index: number, label: string):
   const value = args[index]
   if (typeof value !== 'string' || !value) throw new Error(`${label} must be a non-empty string`)
   return value
+}
+
+function pluginStorageKey(args: readonly unknown[], index: number): string {
+  const key = stringArgument(args, index, 'storage key')
+  if (
+    key.startsWith('/') ||
+    key.includes('..') ||
+    key.includes('\0') ||
+    key === '__proto__' ||
+    key === 'prototype' ||
+    key === 'constructor'
+  ) {
+    throw new Error('plugin storage key must be a safe namespaced key')
+  }
+  return key
 }
 
 function recordArgument(args: readonly unknown[], index: number, label: string): Record<string, unknown> {
@@ -315,6 +351,21 @@ function pluginNamespace(pluginId: string, name: string): void {
   if (!name.startsWith(`plugin:${pluginId}/`)) {
     throw new Error('sandbox events must use the plugin namespace')
   }
+}
+
+function pluginEventPayload(name: string, value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const envelope = value as Record<string, unknown>
+  if (
+    envelope.schemaVersion === 1 &&
+    typeof envelope.eventId === 'string' &&
+    envelope.name === name &&
+    typeof envelope.at === 'string' &&
+    'payload' in envelope
+  ) {
+    return envelope.payload
+  }
+  return value
 }
 
 function rpcUnavailable(service: string): never {
@@ -400,7 +451,7 @@ function hostHandlers(): Record<string, PluginHostHandler> {
       handler: async (args, context) => {
         const hooks = configuredHooks.get(context.pluginId)
         return (
-          hooks?.storage?.get(context.pluginId, stringArgument(args, 0, 'storage key')) ??
+          hooks?.storage?.get(context.pluginId, pluginStorageKey(args, 0)) ??
           rpcUnavailable('storage.get')
         )
       },
@@ -412,7 +463,7 @@ function hostHandlers(): Record<string, PluginHostHandler> {
         await (
           hooks?.storage?.set(
             context.pluginId,
-            stringArgument(args, 0, 'storage key'),
+            pluginStorageKey(args, 0),
             structuredClone(args[1]),
           ) ?? rpcUnavailable('storage.set')
         )
@@ -426,7 +477,7 @@ function hostHandlers(): Record<string, PluginHostHandler> {
         await (
           hooks?.storage?.remove(
             context.pluginId,
-            stringArgument(args, 0, 'storage key'),
+            pluginStorageKey(args, 0),
           ) ?? rpcUnavailable('storage.remove')
         )
         return true
@@ -468,6 +519,7 @@ function hostHandlers(): Record<string, PluginHostHandler> {
       },
     },
     'commands.register': {
+      permission: 'ui.register',
       handler: async (args, context) => {
         const input = recordArgument(args, 0, 'command')
         const id = stringArgument([input.id], 0, 'command ID')
@@ -634,6 +686,54 @@ class SandboxReadyGate {
   }
 }
 
+function sandboxNetworkGuardSource(): string {
+  return `
+const graniteBlockedNetworkError = 'network access is only available through the permission-checked host RPC';
+const graniteNetworkDenied = () => Promise.reject(new Error(graniteBlockedNetworkError));
+const graniteNetworkConstructorDenied = function () { throw new Error(graniteBlockedNetworkError); };
+function graniteBlockProperty(owner, name, value) {
+  let target = owner;
+  while (target) {
+    const descriptor = Object.getOwnPropertyDescriptor(target, name);
+    if (descriptor) {
+      try {
+        Object.defineProperty(target, name, { ...descriptor, value });
+      } catch {}
+      break;
+    }
+    target = Object.getPrototypeOf(target);
+  }
+  try {
+    Object.defineProperty(owner, name, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value,
+    });
+  } catch {}
+}
+for (const name of [
+  'XMLHttpRequest',
+  'WebSocket',
+  'WebSocketStream',
+  'EventSource',
+  'WebTransport',
+  'RTCPeerConnection',
+  'webkitRTCPeerConnection',
+  'mozRTCPeerConnection',
+  'Worker',
+  'SharedWorker',
+]) {
+  graniteBlockProperty(globalThis, name, graniteNetworkConstructorDenied);
+}
+graniteBlockProperty(globalThis, 'fetch', graniteNetworkDenied);
+graniteBlockProperty(globalThis, 'importScripts', graniteNetworkConstructorDenied);
+if (globalThis.navigator) {
+  graniteBlockProperty(globalThis.navigator, 'sendBeacon', graniteNetworkConstructorDenied);
+}
+`
+}
+
 function sandboxRuntimeSource(bundleSourceExpression: string): string {
   return `
 let pluginModule;
@@ -791,6 +891,7 @@ class WorkerSandboxTransport implements SandboxTransport {
       new Blob([this.bundleSource], { type: 'text/javascript' }),
     )
     const source =
+      sandboxNetworkGuardSource() +
       sandboxRuntimeSource(JSON.stringify(this.pluginUrl)) +
       sandboxMessageHandlerSource() +
       `
@@ -995,6 +1096,7 @@ class IframeSandboxTransport implements SandboxTransport {
       `
 const activationToken = ${JSON.stringify(this.token)};
 ` +
+      sandboxNetworkGuardSource() +
       sandboxRuntimeSource('pluginUrl') +
       sandboxMessageHandlerSource() +
       `
@@ -1306,9 +1408,10 @@ export async function activateInstalled(
       const eventContext = activeRuntime.cordis as unknown as {
         emit(event: string, value: unknown): void
       }
-      eventContext.emit(name, payload)
+      const deliveredPayload = pluginEventPayload(name, payload)
+      eventContext.emit(name, deliveredPayload)
       if (sandbox && name.startsWith(`plugin:${plugin.id}/`)) {
-        sandbox.notify(name, payload)
+        sandbox.notify(name, deliveredPayload)
       }
     })
     if (disposeEvents) eventDisposers.set(plugin.id, disposeEvents)
@@ -1361,7 +1464,12 @@ export async function initializeInstalledPlugins(
 }
 
 export async function deactivateInstalled(id: string): Promise<boolean> {
-  eventDisposers.get(id)?.()
+  try {
+    eventDisposers.get(id)?.()
+  } catch {
+    // A host event adapter cannot prevent the plugin's remaining resources
+    // from being released.
+  }
   eventDisposers.delete(id)
   const deactivated = runtime ? await runtime.deactivate(id).catch(() => false) : false
   const transport = sandboxTransports.get(id)
@@ -1418,6 +1526,9 @@ const DEFAULT_PLUGIN_SOURCE_HOSTS = [
   'raw.githubusercontent.com',
   'codeload.github.com',
 ]
+const PLUGIN_ARCHIVE_LIMIT_BYTES = 20 * 1024 * 1024
+const PLUGIN_BUNDLE_LIMIT_BYTES = 20 * 1024 * 1024
+const PLUGIN_MANIFEST_LIMIT_BYTES = 256 * 1024
 
 function validatePluginSourceUrl(sourceUrl: string, allowedHosts: readonly string[]): URL {
   const url = new URL(sourceUrl)
@@ -1444,14 +1555,18 @@ export async function previewPluginSource(
   sourceUrl: string,
   options: RestrictedPluginSourceOptions = {},
 ): Promise<PluginPackagePreview & { sourceUrl: string }> {
-  const maxBytes = options.maxBytes ?? 20 * 1024 * 1024
+  const maxBytes = Math.min(options.maxBytes ?? PLUGIN_ARCHIVE_LIMIT_BYTES, PLUGIN_ARCHIVE_LIMIT_BYTES)
   const url = validatePluginSourceUrl(
     sourceUrl,
     options.allowedHosts ?? DEFAULT_PLUGIN_SOURCE_HOSTS,
   ).toString()
   const bytes = await (options.fetchArchive ?? fetchArchiveThroughHost)(url, maxBytes)
   if (bytes.byteLength > maxBytes) throw new Error('plugin archive exceeds size limit')
-  const preview = await previewPluginPackage(bytes, options)
+  const preview = await previewPluginPackage(bytes, {
+    ...options,
+    maxBytes,
+    actualSource: { kind: 'url', uri: url },
+  })
   return { ...preview, sourceUrl: url }
 }
 
@@ -1459,10 +1574,17 @@ export async function previewPluginPackage(
   packageBytes: Uint8Array,
   options: PreviewPluginOptions = {},
 ): Promise<PluginPackagePreview> {
+  const maxBytes = Math.min(options.maxBytes ?? PLUGIN_ARCHIVE_LIMIT_BYTES, PLUGIN_ARCHIVE_LIMIT_BYTES)
+  if (packageBytes.byteLength > maxBytes) throw new Error('plugin archive exceeds size limit')
   const zip = await JSZip.loadAsync(packageBytes)
   const manifestEntry = zip.file('manifest.json')
   if (!manifestEntry) throw new Error('plugin package is missing manifest.json')
-  const rawManifest = JSON.parse(await manifestEntry.async('string')) as Record<string, unknown>
+  const manifestBytes = await readBoundedZipEntry(
+    manifestEntry,
+    'manifest.json',
+    Math.min(PLUGIN_MANIFEST_LIMIT_BYTES, maxBytes),
+  )
+  const rawManifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as Record<string, unknown>
   const validation = previewPluginManifest(rawManifest, options)
   if (!validation.valid || !validation.manifest) {
     return { validation, requiresUserReview: true }
@@ -1470,7 +1592,11 @@ export async function previewPluginPackage(
   const mainPath = validation.manifest.main
   const main = zip.file(mainPath)
   if (!main) throw new Error(`plugin package is missing ${mainPath}`)
-  const bundle = await main.async('uint8array')
+  const bundle = await readBoundedZipEntry(
+    main,
+    mainPath,
+    Math.min(PLUGIN_BUNDLE_LIMIT_BYTES, maxBytes),
+  )
   if (!(await verifyBundleIntegrity(bundle, validation.manifest.integrity))) {
     throw new Error('plugin bundle integrity verification failed')
   }
@@ -1480,6 +1606,60 @@ export async function previewPluginPackage(
     bundle,
     requiresUserReview: true,
   }
+}
+
+interface BoundedZipStream {
+  on(event: 'data', callback: (chunk: Uint8Array) => void): BoundedZipStream
+  on(event: 'end', callback: () => void): BoundedZipStream
+  on(event: 'error', callback: (error: Error) => void): BoundedZipStream
+  pause(): BoundedZipStream
+  resume(): BoundedZipStream
+}
+
+function readBoundedZipEntry(
+  entry: JSZip.JSZipObject,
+  name: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = []
+    let length = 0
+    let settled = false
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      stream.pause()
+      reject(error)
+    }
+    const stream = (
+      entry as JSZip.JSZipObject & {
+        internalStream(type: 'uint8array'): BoundedZipStream
+      }
+    ).internalStream('uint8array')
+    stream
+      .on('data', (chunk) => {
+        if (settled) return
+        length += chunk.byteLength
+        if (length > maxBytes) {
+          fail(new Error(`plugin entry ${name} exceeds the ${maxBytes}-byte extraction limit`))
+          return
+        }
+        chunks.push(new Uint8Array(chunk))
+      })
+      .on('error', (error) => fail(error))
+      .on('end', () => {
+        if (settled) return
+        settled = true
+        const output = new Uint8Array(length)
+        let offset = 0
+        for (const chunk of chunks) {
+          output.set(chunk, offset)
+          offset += chunk.byteLength
+        }
+        resolve(output)
+      })
+      .resume()
+  })
 }
 
 export const PluginSandboxHost = defineComponent({

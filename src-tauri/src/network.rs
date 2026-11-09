@@ -171,9 +171,7 @@ pub async fn provider_request(
                 &url,
                 &mut request_headers,
                 body.as_deref().unwrap_or_default(),
-                access_key,
-                secret,
-                region,
+                (access_key, secret, region),
                 Utc::now(),
             )?;
             request_headers.insert(
@@ -356,11 +354,10 @@ fn sign_s3_request(
     url: &Url,
     headers: &mut HeaderMap,
     body: &[u8],
-    access_key: &str,
-    secret_key: &str,
-    region: &str,
+    credentials: (&str, &str, &str),
     now: DateTime<Utc>,
 ) -> HostResult<String> {
+    let (access_key, secret_key, region) = credentials;
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
     let date = now.format("%Y%m%d").to_string();
     let payload_hash = sha256_hex(body);
@@ -538,9 +535,7 @@ mod tests {
             &url,
             &mut headers,
             b"payload",
-            "ACCESS",
-            "SECRET",
-            "us-east-1",
+            ("ACCESS", "SECRET", "us-east-1"),
             time,
         )
         .expect("sign");

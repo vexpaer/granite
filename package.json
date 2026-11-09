@@ -17,7 +17,10 @@
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build": "tauri android build --apk",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "prebuild": "node scripts/sync-reader-assets.mjs",
+    "predev": "node scripts/sync-reader-assets.mjs",
+    "pretest": "node packages/core/examples/basic-plugin/build.mjs"
   },
   "dependencies": {
     "@cordisjs/core": "^3.18.1",
@@ -42,6 +45,7 @@
     "@vitejs/plugin-vue": "^6.0.2",
     "fake-indexeddb": "^6.2.4",
     "jsdom": "^27.2.0",
+    "prettier": "^3.9.10",
     "typescript": "^5.9.3",
     "vite": "^7.2.2",
     "vitest": "^3.2.4",

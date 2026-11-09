@@ -52,6 +52,7 @@ pub fn make_default_root(path: PathBuf) -> LibraryRoot {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn make_picked_root(path: PathBuf) -> LibraryRoot {
     fs::create_dir_all(&path).ok();
     let display_name = path
@@ -223,6 +224,13 @@ pub fn safe_existing_file(root: &LibraryRoot, relative_path: &str) -> HostResult
     let safe_root = require_filesystem_root(root, false)?;
     let relative = safe_relative_path(relative_path)?;
     let candidate = safe_root.canonical_path.join(&relative);
+    let candidate_metadata = fs::symlink_metadata(&candidate)
+        .map_err(|_| HostError::NotFound(format!("file '{relative_path}' does not exist")))?;
+    if candidate_metadata.file_type().is_symlink() {
+        return Err(HostError::Forbidden(format!(
+            "file '{relative_path}' is a symbolic link"
+        )));
+    }
     let canonical = fs::canonicalize(&candidate)
         .map_err(|_| HostError::NotFound(format!("file '{relative_path}' does not exist")))?;
     ensure_within(&safe_root.canonical_path, &canonical)?;
@@ -239,32 +247,78 @@ pub fn safe_existing_file(root: &LibraryRoot, relative_path: &str) -> HostResult
 pub fn safe_new_file(root: &LibraryRoot, relative_path: &str) -> HostResult<PathBuf> {
     let safe_root = require_filesystem_root(root, true)?;
     let relative = safe_relative_path(relative_path)?;
-    let candidate = safe_root.canonical_path.join(relative);
-    let parent = candidate.parent().ok_or_else(|| {
-        HostError::Forbidden("file path has no safe parent inside the library root".into())
-    })?;
-    fs::create_dir_all(parent)
-        .map_err(|error| HostError::io("failed to create library subdirectory", error))?;
-    let parent = fs::canonicalize(parent)
-        .map_err(|error| HostError::io("failed to validate library subdirectory", error))?;
-    ensure_within(&safe_root.canonical_path, &parent)?;
-    let file_name = candidate
+    let file_name = relative
         .file_name()
         .ok_or_else(|| HostError::InvalidArgs("file path has no file name".into()))?;
+    let parent_relative = relative.parent().ok_or_else(|| {
+        HostError::Forbidden("file path has no safe parent inside the library root".into())
+    })?;
+    let parent = create_safe_directory(&safe_root.canonical_path, parent_relative)?;
     let target = parent.join(file_name);
-    if target.exists() {
-        let metadata = fs::metadata(&target)
-            .map_err(|error| HostError::io("failed to inspect existing target", error))?;
-        if metadata.is_dir() {
-            return Err(HostError::Conflict(
-                "target path is an existing directory".into(),
-            ));
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(HostError::Forbidden(
+                    "target path is an existing symbolic link".into(),
+                ));
+            }
+            if metadata.is_dir() {
+                return Err(HostError::Conflict(
+                    "target path is an existing directory".into(),
+                ));
+            }
+            let canonical = fs::canonicalize(&target)
+                .map_err(|error| HostError::io("failed to validate existing target", error))?;
+            ensure_within(&safe_root.canonical_path, &canonical)?;
         }
-        let canonical = fs::canonicalize(&target)
-            .map_err(|error| HostError::io("failed to validate existing target", error))?;
-        ensure_within(&safe_root.canonical_path, &canonical)?;
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(HostError::io("failed to inspect existing target", error)),
     }
     Ok(target)
+}
+
+pub fn create_safe_directory(root: &Path, relative_path: &Path) -> HostResult<PathBuf> {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| HostError::io("failed to validate directory root", error))?;
+    let metadata = fs::metadata(&canonical_root)
+        .map_err(|error| HostError::io("failed to inspect directory root", error))?;
+    if !metadata.is_dir() {
+        return Err(HostError::InvalidArgs(
+            "directory root is not a directory".into(),
+        ));
+    }
+
+    let mut current = canonical_root.clone();
+    for component in relative_path.components() {
+        let Component::Normal(name) = component else {
+            return Err(HostError::Forbidden(
+                "directory path contains an unsafe component".into(),
+            ));
+        };
+        current.push(name);
+        match fs::create_dir(&current) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(HostError::io(
+                    "failed to create a validated library subdirectory",
+                    error,
+                ));
+            }
+        }
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|error| HostError::io("failed to inspect library subdirectory", error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(HostError::Forbidden(
+                "library subdirectory is a link or is not a directory".into(),
+            ));
+        }
+        let canonical = fs::canonicalize(&current)
+            .map_err(|error| HostError::io("failed to validate library subdirectory", error))?;
+        ensure_within(&canonical_root, &canonical)?;
+        current = canonical;
+    }
+    Ok(current)
 }
 
 pub fn ensure_within(root: &Path, candidate: &Path) -> HostResult<()> {
@@ -460,5 +514,25 @@ mod tests {
             .into_owned();
         let validated = validate_library_root(missing);
         assert_eq!(validated.permission, RootPermission::Unavailable);
+    }
+
+    #[test]
+    fn safe_directory_creation_rejects_file_components() {
+        let root_directory = tempdir().expect("root");
+        fs::write(root_directory.path().join("blocked"), b"not a directory").expect("blocker");
+        assert!(create_safe_directory(root_directory.path(), Path::new("blocked/child")).is_err());
+        assert!(!root_directory.path().join("blocked/child").exists());
+    }
+
+    #[test]
+    fn new_file_creation_rejects_file_components_before_writing() {
+        let root_directory = tempdir().expect("root");
+        fs::write(root_directory.path().join("books"), b"not a directory").expect("blocker");
+        let root = make_default_root(root_directory.path().to_path_buf());
+        assert!(safe_new_file(&root, "books/book.pdf").is_err());
+        assert_eq!(
+            fs::read(root_directory.path().join("books")).expect("blocker preserved"),
+            b"not a directory"
+        );
     }
 }

@@ -41,6 +41,7 @@ import ReaderView from './views/ReaderView.vue';
 import PluginSlots from './components/PluginSlots.vue';
 import PluginSurface from './components/PluginSurface.vue';
 import type { PluginUiEntry } from './services/plugin-manager';
+import { matchesShortcut } from './services/shortcuts';
 import './styles/global.css';
 import './styles/app.css';
 
@@ -63,7 +64,9 @@ const android = computed(
 );
 const androidPortrait = computed(() => android.value && viewport.width < 700 && viewport.height >= viewport.width);
 const androidLandscape = computed(() => android.value && !androidPortrait.value);
-const desktopCollapsed = computed(() => !android.value && viewport.width < 1100);
+const desktopCollapsed = computed(
+  () => !android.value && (!app.settings.sidebarExpanded || viewport.width < 1100),
+);
 const readerActive = computed(() => app.route.name === 'reader');
 const currentBook = computed(() => app.currentBook);
 const routeKey = computed(() => `${app.route.name}:${app.route.id || ''}`);
@@ -88,6 +91,13 @@ const pluginPageTitle = computed(() => {
   return pluginPageEntry.value?.title || '插件页面';
 });
 const currentRouteTitle = computed(() => routeTitle(app.route.name));
+const searchShortcutLabel = computed(() =>
+  String(app.settings.shortcuts.search || 'Control+k')
+    .replace(/\bControl\b/gi, 'Ctrl')
+    .replace(/\bMeta\b/gi, 'Cmd')
+    .replace(/\+/g, ' + ')
+    .toUpperCase(),
+);
 const fallback = { template: '<div />' };
 const views = {
   home: HomeView,
@@ -216,7 +226,10 @@ function onGlobalKeydown(event: KeyboardEvent) {
   const editing =
     target.matches('input, textarea, select, [contenteditable="true"]') ||
     Boolean(target.closest('[contenteditable="true"]'));
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+  if (
+    app.settings.shortcuts.search &&
+    matchesShortcut(event, app.settings.shortcuts.search)
+  ) {
     event.preventDefault();
     if (app.route.name === 'reader') return;
     searchInput.value?.focus();
@@ -311,7 +324,7 @@ onBeforeUnmount(() => {
             aria-label="全局搜索"
             placeholder="搜索书籍、笔记、标签或内容"
           />
-          <span v-if="!android" class="search-shortcut" aria-hidden="true">Ctrl K</span>
+          <span v-if="!android" class="search-shortcut" aria-hidden="true">{{ searchShortcutLabel }}</span>
           <button v-if="searchText" type="button" aria-label="清空搜索" @click="searchText = ''">
             <X :size="15" />
           </button>

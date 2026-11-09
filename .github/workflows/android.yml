@@ -48,6 +48,9 @@ jobs:
       - name: Create reader test fixtures
         run: node scripts/create-fixtures.mjs
 
+      - name: Build plugin example fixture
+        run: node packages/core/examples/basic-plugin/build.mjs
+
       - name: Run unit tests
         run: npm test
 
@@ -139,6 +142,9 @@ jobs:
 
       - name: Create reader test fixtures
         run: node scripts/create-fixtures.mjs
+
+      - name: Build plugin example fixture
+        run: node packages/core/examples/basic-plugin/build.mjs
 
       - name: Run unit tests
         run: npm test

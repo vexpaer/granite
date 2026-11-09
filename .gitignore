@@ -1,10 +1,12 @@
 node_modules/
+.venv/
 .cache/
 private/
 .npm-tmp/
 *.tgz
 target/
 dist/
+public/pdfjs/
 test-results/
 playwright-report/
 .env

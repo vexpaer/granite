@@ -67,7 +67,7 @@ internal class NotebookSafMirror(
                 id = id,
                 title = title,
                 folder = folder,
-                indexedPath = previousIndex.entries[id],
+                indexedPath = previousIndex.entries[id]?.relativePath,
                 usedPaths = usedPaths,
             )
             val document = renderMarkdown(note as ObjectNode, id, title, folder, body)
@@ -412,7 +412,7 @@ internal class NotebookSafMirror(
         var current: DocumentFile? = root
         for (part in parts) {
             current = current?.findFile(part) ?: return null
-            if (current == null || !current.isDirectory) return null
+            if (!current.isDirectory) return null
         }
         return current
     }

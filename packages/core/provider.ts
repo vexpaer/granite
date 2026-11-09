@@ -191,6 +191,14 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw signal.reason ?? new Error('request aborted')
 }
 
+function errorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object' || !('status' in error)) return undefined
+  const status = (error as { status?: unknown }).status
+  return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599
+    ? status
+    : undefined
+}
+
 function providerProfileCopy(profile: ProviderProfile): Readonly<ProviderProfile> {
   if (!profile.id) throw new ProviderError('provider profile id is required')
   if (profile.type !== 'webdav' && profile.type !== 's3') {
@@ -198,6 +206,28 @@ function providerProfileCopy(profile: ProviderProfile): Readonly<ProviderProfile
   }
   if (!profile.endpoint) throw new ProviderError('provider endpoint is required')
   if (!profile.credentialId) throw new ProviderError('provider credentialId is required')
+  let endpoint: URL
+  try {
+    endpoint = new URL(profile.endpoint)
+  } catch {
+    throw new ProviderError('provider endpoint must be a valid HTTPS URL')
+  }
+  if (endpoint.protocol !== 'https:') {
+    throw new ProviderError('provider endpoint must use HTTPS')
+  }
+  if (endpoint.username || endpoint.password) {
+    throw new ProviderError('provider endpoint cannot contain embedded credentials')
+  }
+  if (typeof profile.prefix !== 'string') {
+    throw new ProviderError('provider prefix must be a string')
+  }
+  const normalizedPrefix = profile.prefix.replace(/\\/g, '/')
+  if (
+    normalizedPrefix.includes('\0') ||
+    normalizedPrefix.split('/').includes('..')
+  ) {
+    throw new ProviderError('provider prefix must be a safe relative path')
+  }
   return Object.freeze({ ...profile })
 }
 
@@ -299,7 +329,9 @@ export function createHostProviderTransport(
           hostCall({
             op: 'provider.request',
             args: {
-              profile: { ...request.profile },
+              // BoundProvider keys already include the normalized profile
+              // prefix. The native host must only apply the endpoint/bucket.
+              profile: { ...request.profile, prefix: '' },
               method: request.method,
               key: request.key,
               ...(request.body ? { body: [...request.body] } : {}),
@@ -311,9 +343,11 @@ export function createHostProviderTransport(
       } catch (error) {
         throwIfAborted(request.signal)
         if (error instanceof ProviderError) throw error
+        const status = errorStatus(error)
         throw new ProviderError('native provider request failed', {
-          code: 'NATIVE_REQUEST_FAILED',
-          retryable: true,
+          code: status === 404 ? 'NOT_FOUND' : 'NATIVE_REQUEST_FAILED',
+          ...(status !== undefined ? { status } : {}),
+          retryable: status === undefined || defaultRetryableStatus(status),
           cause: error,
         })
       }
@@ -391,6 +425,7 @@ abstract class BoundProvider implements StorageProvider {
       throwIfAborted(options.signal)
       let response: ProviderTransportResponse | undefined
       let requestError: unknown
+      let requestThrew = false
       try {
         response = await this.transport.request({
           profile: this.profile,
@@ -401,16 +436,21 @@ abstract class BoundProvider implements StorageProvider {
           signal: options.signal,
         })
       } catch (error) {
+        requestThrew = true
         requestError = error
         if (options.signal?.aborted) throw options.signal.reason ?? error
       }
 
+      const thrownStatus = errorStatus(requestError)
       const retryable =
-        requestError !== undefined ||
+        (requestThrew &&
+          (thrownStatus === undefined ||
+            retryableStatuses.includes(thrownStatus) ||
+            defaultRetryableStatus(thrownStatus))) ||
         (response !== undefined &&
           (retryableStatuses.includes(response.status) ||
             defaultRetryableStatus(response.status)))
-      if (response && response.status < 400) return response
+      if (response && response.status >= 200 && response.status < 300) return response
       if (!retryable || attempt >= maxAttempts) {
         if (response) {
           throw new ProviderError(`provider request failed with HTTP ${response.status}`, {
@@ -420,6 +460,14 @@ abstract class BoundProvider implements StorageProvider {
           })
         }
         if (requestError instanceof ProviderError) throw requestError
+        if (thrownStatus !== undefined) {
+          throw new ProviderError(`provider request failed with HTTP ${thrownStatus}`, {
+            code: thrownStatus === 404 ? 'NOT_FOUND' : 'HTTP_ERROR',
+            status: thrownStatus,
+            retryable: defaultRetryableStatus(thrownStatus),
+            cause: requestError,
+          })
+        }
         throw new ProviderError('provider request failed', {
           code: 'NETWORK_ERROR',
           retryable: true,
@@ -448,12 +496,17 @@ abstract class BoundProvider implements StorageProvider {
     const rawPath = queryIndex < 0 ? key : key.slice(0, queryIndex)
     const query = queryIndex < 0 ? '' : key.slice(queryIndex + 1)
     const normalized = rawPath.replace(/\\/g, '/').replace(/^\/+/, '')
-    const encodedPath = !prefix
-      ? encodeLogicalKey(normalized)
+    if (normalized.includes('\0') || normalized.split('/').includes('..')) {
+      throw new TypeError('provider object key must be a safe relative path')
+    }
+    // The native transport owns URL encoding so names containing '%' are not
+    // double-encoded when Rust constructs the final URL.
+    const storagePath = !prefix
+      ? normalized
       : !normalized
-        ? encodeLogicalKey(prefix)
-        : encodeLogicalKey(`${prefix}/${normalized}`)
-    return query ? `${encodedPath}?${query}` : encodedPath
+        ? prefix
+        : `${prefix}/${normalized}`
+    return query ? `${storagePath}?${query}` : storagePath
   }
 
   protected stripProviderPrefix(key: string): string {
@@ -564,6 +617,9 @@ export class WebDavProvider extends BoundProvider {
     options: WebDavProviderOptions = {},
   ) {
     if (profile.type !== 'webdav') throw new ProviderBindingError('WebDAV provider requires a webdav profile')
+    if (!profile.username?.trim()) {
+      throw new ProviderBindingError('WebDAV provider requires a username')
+    }
     super(profile, transport, options.digest ?? sha256Hex, options.sleep ?? defaultSleep)
   }
 
@@ -732,6 +788,8 @@ export class S3Provider extends BoundProvider {
   ) {
     if (profile.type !== 's3') throw new ProviderBindingError('S3 provider requires an s3 profile')
     if (!profile.bucket) throw new ProviderBindingError('S3 provider requires a bucket')
+    if (!profile.region) throw new ProviderBindingError('S3 provider requires a region')
+    if (!profile.accessKeyId) throw new ProviderBindingError('S3 provider requires accessKeyId')
     super(profile, transport, options.digest ?? sha256Hex, options.sleep ?? defaultSleep)
   }
 
@@ -764,6 +822,8 @@ export class S3Provider extends BoundProvider {
         'GET',
         appendQuery('', query),
         options,
+        undefined,
+        true,
       )
       const xml = new TextDecoder().decode(toBytes(response.body))
       for (const block of xmlBlocks(xml, 'Contents')) {
@@ -815,7 +875,7 @@ export class S3Provider extends BoundProvider {
     destinationKey: string,
     options: ProviderRequestOptions = {},
   ): Promise<void> {
-    const source = this.storageKey(sourceKey)
+    const source = encodeLogicalKey(this.storageKey(sourceKey))
     await this.request('PUT', destinationKey, {
       ...options,
       headers: {

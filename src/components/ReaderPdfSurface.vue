@@ -44,6 +44,7 @@ import {
   nearestLegalTransform,
   pageAtViewportCenter,
   translatePageToTop,
+  zoomAndPanBetweenPoints,
   zoomAroundPoint,
   type DocumentTransform,
 } from '../reader/pdf-geometry';
@@ -684,7 +685,12 @@ function onPointerMove(event: PointerEvent): void {
   } else if (pointers.size >= 2) {
     const distance = Math.max(1, pointerDistance());
     const ratio = gestureStartDistance > 0 ? distance / gestureStartDistance : 1;
-    const zoomed = zoomAroundPoint(gestureBase, gestureBase.scale * ratio, center);
+    const zoomed = zoomAndPanBetweenPoints(
+      gestureBase,
+      gestureBase.scale * ratio,
+      gestureStartCenter,
+      center,
+    );
     setTransform(zoomed);
   }
   lastMomentum = { x: center.x, y: center.y, at: performance.now() };

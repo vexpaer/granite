@@ -1,15 +1,62 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import JSZip from 'jszip';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
-const dir=path.resolve('.cache/fixtures');await fs.mkdir(dir,{recursive:true});
-const prose='A quiet room opens onto the mountains. Reading makes space for an unfamiliar idea. The book, the margin, and the small note belong to the reader. These sentences are original test content for Granite.';
-await fs.writeFile(path.join(dir,'Granite Field Notes.txt'),Array.from({length:40},(_,i)=>`Chapter ${i+1}\n\n${Array(12).fill(prose).join('\n\n')}`).join('\n\n'));
-const pdf=await PDFDocument.create();pdf.setTitle('Granite Field Notes');pdf.setAuthor('Granite Tests');const font=await pdf.embedFont(StandardFonts.TimesRoman);for(let i=0;i<12;i++){const page=pdf.addPage([595,842]);page.drawText(`Granite Field Notes - ${i+1}`,{x:48,y:780,size:23,font,color:rgb(.25,.19,.4)});for(let l=0;l<24;l++)page.drawText(l%2?'Reading makes space for an unfamiliar idea.':'A quiet room opens onto the mountains.',{x:48,y:730-l*24,size:13,font});}await fs.writeFile(path.join(dir,'Granite Field Notes.pdf'),await pdf.save());
-const zip=new JSZip();zip.file('mimetype','application/epub+zip',{compression:'STORE'});zip.file('META-INF/container.xml','<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
-const chapters=Array.from({length:6},(_,i)=>`chapter${i+1}`);
-zip.file('OEBPS/content.opf',`<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:granite-test-original</dc:identifier><dc:title>山间阅读手记</dc:title><dc:creator>Granite 测试</dc:creator><dc:language>zh-CN</dc:language><meta property="dcterms:modified">2026-11-09T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${chapters.map(c=>`<item id="${c}" href="${c}.xhtml" media-type="application/xhtml+xml"/>`).join('')}</manifest><spine>${chapters.map(c=>`<itemref idref="${c}"/>`).join('')}</spine></package>`);
-zip.file('OEBPS/nav.xhtml',`<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head><body><nav epub:type="toc"><ol>${chapters.map((c,i)=>`<li><a href="${c}.xhtml">第${i+1}章 山间</a></li>`).join('')}</ol></nav></body></html>`);
-for(const [i,c]of chapters.entries())zip.file(`OEBPS/${c}.xhtml`,`<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第${i+1}章</title></head><body><h1>第${i+1}章 山间</h1>${Array.from({length:36},(_,n)=>`<p id="p${n}">窗外的山峰渐渐明亮。在安静的书房里，阅读让我们有机会理解不同的生活。这是 Granite 的原创格式测试文字，第 ${n+1} 段。</p>`).join('')}<a href="#p0">回到章首</a></body></html>`);
-await fs.writeFile(path.join(dir,'山间阅读手记.epub'),await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE'}));
+import fs from "node:fs/promises";
+import path from "node:path";
+import JSZip from "jszip";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+const dir = path.resolve(".cache/fixtures");
+await fs.mkdir(dir, { recursive: true });
+const prose =
+  "A quiet room opens onto the mountains. Reading makes space for an unfamiliar idea. The book, the margin, and the small note belong to the reader. These sentences are original test content for Granite.";
+await fs.writeFile(
+  path.join(dir, "Granite Field Notes.txt"),
+  Array.from(
+    { length: 40 },
+    (_, i) => `Chapter ${i + 1}\n\n${Array(12).fill(prose).join("\n\n")}`,
+  ).join("\n\n"),
+);
+const pdf = await PDFDocument.create();
+pdf.setTitle("Granite Field Notes");
+pdf.setAuthor("Granite Tests");
+const font = await pdf.embedFont(StandardFonts.TimesRoman);
+for (let i = 0; i < 12; i++) {
+  const page = pdf.addPage([595, 842]);
+  page.drawText(`Granite Field Notes - ${i + 1}`, {
+    x: 48,
+    y: 780,
+    size: 23,
+    font,
+    color: rgb(0.25, 0.19, 0.4),
+  });
+  for (let l = 0; l < 24; l++)
+    page.drawText(
+      l % 2
+        ? "Reading makes space for an unfamiliar idea."
+        : "A quiet room opens onto the mountains.",
+      { x: 48, y: 730 - l * 24, size: 13, font },
+    );
+}
+await fs.writeFile(path.join(dir, "Granite Field Notes.pdf"), await pdf.save());
+const zip = new JSZip();
+zip.file("mimetype", "application/epub+zip", { compression: "STORE" });
+zip.file(
+  "META-INF/container.xml",
+  '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+);
+const chapters = Array.from({ length: 6 }, (_, i) => `chapter${i + 1}`);
+zip.file(
+  "OEBPS/content.opf",
+  `<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:granite-test-original</dc:identifier><dc:title>山间阅读手记</dc:title><dc:creator>Granite 测试</dc:creator><dc:language>zh-CN</dc:language><meta property="dcterms:modified">2026-11-09T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>${chapters.map((c) => `<item id="${c}" href="${c}.xhtml" media-type="application/xhtml+xml"/>`).join("")}</manifest><spine>${chapters.map((c) => `<itemref idref="${c}"/>`).join("")}</spine></package>`,
+);
+zip.file(
+  "OEBPS/nav.xhtml",
+  `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head><body><nav epub:type="toc"><ol>${chapters.map((c, i) => `<li><a href="${c}.xhtml">第${i + 1}章 山间</a></li>`).join("")}</ol></nav></body></html>`,
+);
+for (const [i, c] of chapters.entries())
+  zip.file(
+    `OEBPS/${c}.xhtml`,
+    `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第${i + 1}章</title></head><body><h1>第${i + 1}章 山间</h1>${Array.from({ length: 36 }, (_, n) => `<p id="p${n}">窗外的山峰渐渐明亮。在安静的书房里，阅读让我们有机会理解不同的生活。这是 Granite 的原创格式测试文字，第 ${n + 1} 段。</p>`).join("")}<a href="#p0">回到章首</a></body></html>`,
+  );
+await fs.writeFile(
+  path.join(dir, "山间阅读手记.epub"),
+  await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }),
+);
 console.log(`Original format fixtures written to ${dir}`);

@@ -34,6 +34,17 @@ export type PluginSourceKind =
   | 'local'
   | 'user'
 
+const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+const RESERVED_APP_NAMESPACES = new Set(['granite.profiles'])
+
+function isReservedPluginId(id: string): boolean {
+  return (
+    RESERVED_OBJECT_KEYS.has(id) ||
+    RESERVED_APP_NAMESPACES.has(id) ||
+    id.startsWith('granite.local-')
+  )
+}
+
 export interface PluginSource {
   kind: PluginSourceKind
   uri?: string
@@ -157,7 +168,11 @@ export async function verifyBundleIntegrity(
   if (!entries.length) return false
   for (const entry of entries) {
     const actual = bytesToBase64(await digest(entry.algorithm, bytes)).replace(/=+$/, '')
-    if (actual === entry.digest.replace(/=+$/, '')) return true
+    const expected = entry.digest
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .replace(/=+$/, '')
+    if (actual === expected) return true
   }
   return false
 }
@@ -178,7 +193,10 @@ function readStringMap(
   }
   const output: Record<string, string> = {}
   for (const [dependencyId, range] of Object.entries(value)) {
-    if (!/^[a-z0-9][a-z0-9._-]*$/.test(dependencyId)) {
+    if (
+      !/^[a-z0-9][a-z0-9._-]*$/.test(dependencyId) ||
+      RESERVED_OBJECT_KEYS.has(dependencyId)
+    ) {
       addIssue('error', 'dependency-id', `${path}.${dependencyId}`, 'dependency ID is invalid')
       continue
     }
@@ -311,8 +329,17 @@ export function validateManifest(
       `schemaVersion must be ${GRANITE_PLUGIN_MANIFEST_SCHEMA_VERSION}`,
     )
   }
-  if (typeof input.id !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(input.id)) {
-    addIssue('error', 'plugin-id', 'id', 'plugin ID must use lowercase stable identifier characters')
+  if (
+    typeof input.id !== 'string' ||
+    !/^[a-z0-9][a-z0-9._-]*$/.test(input.id) ||
+    isReservedPluginId(input.id)
+  ) {
+    addIssue(
+      'error',
+      'plugin-id',
+      'id',
+      'plugin ID must use an available lowercase stable identifier namespace',
+    )
   }
   for (const field of ['name', 'author', 'license'] as const) {
     if (typeof input[field] !== 'string' || !input[field].trim()) {
@@ -930,6 +957,12 @@ export class CommandRegistry {
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((command) => ({ ...command }))
   }
+
+  clearPlugin(pluginId: string): void {
+    for (const [key, command] of this.commands) {
+      if (command.pluginId === pluginId) this.commands.delete(key)
+    }
+  }
 }
 
 export interface PluginStorageAdapter {
@@ -1103,7 +1136,13 @@ function namespacedEvent(pluginId: string, name: string): void {
 }
 
 function assertNamespacedStorageKey(key: string): void {
-  if (!key || key.startsWith('/') || key.includes('..') || key.includes('\0')) {
+  if (
+    !key ||
+    key.startsWith('/') ||
+    key.includes('..') ||
+    key.includes('\0') ||
+    RESERVED_OBJECT_KEYS.has(key)
+  ) {
     throw new Error('plugin storage key must be a safe namespaced key')
   }
 }
@@ -1154,8 +1193,10 @@ function createPluginApi(
         lifecycle.add(runtime.ui.register(manifest.id, permissions, contribution)),
     }),
     commands: Object.freeze({
-      register: (command: PluginCommand) =>
-        lifecycle.add(runtime.commands.register(manifest.id, command)),
+      register: (command: PluginCommand) => {
+        permissions.assert('ui.register')
+        return lifecycle.add(runtime.commands.register(manifest.id, command))
+      },
     }),
     storage: Object.freeze({
       get: async (key: string) => {
@@ -1393,6 +1434,7 @@ export class GranitePluginRuntime {
     record.public.status = 'failed'
     record.public.error = errorMessage(error)
     this.ui.clearPlugin(record.manifest.id)
+    this.commands.clearPlugin(record.manifest.id)
     try {
       await record.lifecycle.dispose()
     } catch (cleanupError) {
@@ -1443,6 +1485,7 @@ export class GranitePluginRuntime {
       record.public.error = errorMessage(error)
     }
     this.ui.clearPlugin(id)
+    this.commands.clearPlugin(id)
     return true
   }
 

@@ -338,7 +338,7 @@ async function savePolicy() {
           <span>{{ providerDraft.type === 'webdav' ? '应用专用密码' : 'Secret Access Key' }}</span>
           <input v-model="secret" class="field" type="password" autocomplete="new-password" :required="!provider" :placeholder="provider ? '留空则保留现有凭证' : '仅在保存时传入原生安全存储'" />
         </label>
-        <div class="credential-note form-field--full"><ShieldCheck :size="17" /><span>秘密字段不会复制到 app.settings、同步备份或日志。浏览器预览不提供系统凭证存储。</span></div>
+        <div class="credential-note form-field--full"><ShieldCheck :size="17" /><span>秘密字段不会写入应用设置、同步备份或日志。浏览器预览不提供系统凭证存储。</span></div>
       </form>
       <template #footer>
         <button class="button button--ghost" type="button" @click="providerOpen = false">取消</button>

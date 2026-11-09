@@ -20,6 +20,11 @@ and paginated modes, and per-book appearance overrides. Reflow annotations use
 chapter and stable text-offset locations. Invalid locations remain visible in
 the database rather than being silently discarded.
 
+Reader keyboard actions use the canonical `app.settings.shortcuts` bindings for
+search, next, previous, fullscreen, and bookmark through `matchesShortcut`.
+PageUp/PageDown, Space/Shift+Space, Home, and End remain unmodified navigation
+fallbacks when the configured binding does not consume the key.
+
 PDF annotations are written as standard, editable PDF annotation dictionaries:
 `Highlight`, `Underline`, `Text`, and `Ink`. Granite identifiers and an
 appearance stream are included, while the low-level objects remain readable by
@@ -53,6 +58,25 @@ covers the required package, spine, NAV/NCX, and resource behaviors. Required
 reader dependencies are `pdfjs-dist`, `pdf-lib`, `jszip`, and
 `@lingo-reader/mobi-parser`.
 
+## PDF.js packaged resources
+
+`ReaderView` configures PDF.js with same-origin URLs:
+
+- `/pdfjs/cmaps/`
+- `/pdfjs/standard_fonts/`
+- `/pdfjs/wasm/`
+
+The application build must copy the complete matching directories from the
+installed `pdfjs-dist` package into those output paths, preserving each
+directory structure and license files. `cMapPacked` is enabled because the
+CMap files use the packed `.bcmap` format. This includes CJK CMaps, standard
+font substitutes, and the WASM image/color decoders used by PDF.js 5.
+
+The desktop and Android native CSP must permit same-origin PDF.js resource
+fetches and worker creation from `self` and `blob:` as documented by their
+bridge contracts. Missing copied resources can make some otherwise valid PDFs
+render incompletely even when ordinary Latin-text PDFs appear to work.
+
 ## Android verification status
 
 Physical Android-device installation and runtime verification are **waived by
@@ -67,7 +91,7 @@ physical-device checks.
 ## Reader-owned tests
 
 ```powershell
-npm test -- --run src/reader/formats.fixtures.test.ts src/reader/pdf-annotations.test.ts
+npm test -- --run src/reader/formats.fixtures.test.ts src/reader/pdf-annotations.test.ts src/reader/pdf-geometry.test.ts
 ```
 
 The format test uses the original generated EPUB/PDF/TXT fixtures and the

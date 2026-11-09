@@ -47,6 +47,28 @@ and final hash check. Imports use a unique filename and verify the destination
 hash before returning. Migration never deletes source files; `root.migrateCancel`
 sets the cooperative cancellation flag.
 
+Managed SAF books can be removed with `book.trash`:
+
+```json
+{
+  "root": { "kind": "saf", "path": "content://..." },
+  "relativePath": "Books/example.epub",
+  "bookId": "stable Granite book ID"
+}
+```
+
+The Android implementation reads and hashes the source, copies it to
+`.granite/trash/<bookId>/<timestamp-uuid-filename>`, verifies the copied size
+and SHA-256, removes the source only after verification, and verifies the trash
+copy again. A failed post-removal check restores the original when possible.
+The operation returns `{trashed:true}` only after the verified move completes.
+Unavailable roots, failed copies, and failed removals return errors so cleanup
+can remain queued and book tombstones are not written prematurely. The
+app-private filesystem root uses the Rust trash implementation.
+
+`root.scan` ignores the top-level `.granite` and `Notebook` subtrees, so trash
+and Notebook files cannot reappear as managed books.
+
 `file.pickBooks` uses `ACTION_OPEN_DOCUMENT` with multiple selection and
 returns `{name, bytes: number[]}[]`.
 

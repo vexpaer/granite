@@ -227,6 +227,23 @@ describe('SyncEngine transport and snapshot helpers', () => {
     ])
   })
 
+  it('keeps device document keys logical for one native URL-encoding pass', async () => {
+    const provider = new MemoryProvider()
+    const engine = createSyncEngine({
+      provider,
+      deviceId: 'device 100% 书',
+      now: () => '2026-11-09T00:00:00.000Z',
+    })
+
+    await engine.publishSnapshot(snapshot, { revision: 1 })
+
+    expect(provider.objects.has('sync/devices/device 100% 书.json')).toBe(true)
+    await expect(engine.pull()).resolves.toMatchObject({
+      failures: [],
+      documents: [expect.objectContaining({ deviceId: 'device 100% 书' })],
+    })
+  })
+
   it('checks book-object checksums on upload and download', async () => {
     const provider = new MemoryProvider()
     const engine = createSyncEngine({ provider, deviceId: 'device-a' })
@@ -234,6 +251,10 @@ describe('SyncEngine transport and snapshot helpers', () => {
     const hash = await sha256Hex(bytes)
 
     await engine.uploadBookObject(hash, bytes)
+    await expect(engine.uploadBookObject(hash, bytes)).resolves.toMatchObject({
+      checksum: hash,
+      status: 200,
+    })
     await expect(engine.downloadBookObject(hash)).resolves.toEqual(bytes)
     await expect(
       engine.uploadBookObject('0'.repeat(64), bytes),

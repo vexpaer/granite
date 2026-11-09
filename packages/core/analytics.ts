@@ -1,5 +1,5 @@
 import type { ReaderLocation, ReadingSession } from '../../src/types'
-import { dedupeReadingSessions } from './sync'
+import { canonicalJson, dedupeReadingSessions } from './sync'
 
 export type AnalyticsGranularity = 'day' | 'week' | 'month' | 'year'
 export type ReadingVisibility = 'visible' | 'hidden'
@@ -282,6 +282,8 @@ export function summarizeReadingSessions(
   })
   const activeDays = daily.filter((entry) => entry.activeMs > 0).map((entry) => entry.key)
   const activeDaySet = new Set(activeDays)
+  const sessionIds = new Set(daily.flatMap((entry) => entry.sessionIds))
+  const bookIds = new Set(daily.flatMap((entry) => entry.bookIds))
 
   let longestStreak = 0
   let runningStreak = 0
@@ -304,9 +306,9 @@ export function summarizeReadingSessions(
   }
 
   return {
-    totalActiveMs: deduped.reduce((total, session) => total + Math.max(0, session.activeMs), 0),
-    sessionCount: deduped.length,
-    bookCount: new Set(deduped.map((session) => session.bookId)).size,
+    totalActiveMs: daily.reduce((total, entry) => total + entry.activeMs, 0),
+    sessionCount: sessionIds.size,
+    bookCount: bookIds.size,
     activeDays: activeDays.length,
     currentStreak,
     longestStreak,
@@ -514,8 +516,14 @@ export class ReadingSessionLog {
   private readonly sessions = new Map<string, ReadingSession>()
 
   add(session: ReadingSession): boolean {
-    if (this.sessions.has(session.id)) return false
-    this.sessions.set(session.id, structuredClone(session))
+    const existing = this.sessions.get(session.id)
+    if (!existing) {
+      this.sessions.set(session.id, structuredClone(session))
+      return true
+    }
+    const merged = dedupeReadingSessions([existing, session])[0]
+    if (!merged || canonicalJson(merged) === canonicalJson(existing)) return false
+    this.sessions.set(session.id, merged)
     return true
   }
 
