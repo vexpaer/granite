@@ -1,7 +1,7 @@
 # Granite Test Evidence
 
 - **Observed:** 2026-11-10, Asia/Shanghai
-- **Baseline:** `4203e6d2e4886d58edd1ca192c626b7758d37894` plus dirty worktree changes. Results below describe the observed workspace, not a clean release tag.
+- **Integrated source:** `e8070f13008edc0a3d40df846fc77d8d2e49f9ee`. The final local checks and Windows package below were produced from this source before its integration commit; subsequent documentation updates do not change the packaged application.
 - **Host:** Windows 10 Home China build 26100, x64; PowerShell 7.
 - **Toolchain:** Node.js 22.23.1, npm 10.9.8, Rust/Cargo `stable-x86_64-pc-windows-msvc`, Tauri CLI 2.12.x.
 - **Caches:** project dependencies, Cargo, browser assets and build outputs are on `E:`. The local Rustup copy is now under `.cache/rustup`; historical Gradle runs used the pre-existing C-to-D junction, while subsequent Android builds use `.cache/gradle`. See the native build records for the exact environment of each run.
@@ -20,10 +20,11 @@
 | `npx playwright test tests/e2e/pdf-annotations.spec.ts --reporter=list` | **PASS** | Targeted PDF browser flow passed: Highlight, Underline, Text and Ink; safe backup/hash/export; independent MuPDF/PyMuPDF 2.1 readback reported all four annotations readable and editable. |
 | Current full Playwright set | **PASS** | **8/8 in 1.2 minutes** on 2026-11-10: four formats, notes and reload, empty/compact shell, four-format position/bookmark restoration and return to Home, navigation context, two isolated-plugin flows, and PDF write/backup/export with MuPDF readback. |
 | Local Android Debug APK build | **PASS as local build evidence** | Not a GitHub Actions pass and not runtime evidence. |
-| GitHub Actions Android run `42644227600` | **PASS, historical source** | Head `4203e6d`; Debug APK built, inspected and uploaded. Downloaded artifact and signature were verified; see [Android CI record](android/ci.md). Integrated-source CI is still pending. |
+| GitHub Actions Android run `42765264307` | **PASS** | Integrated source `e8070f1`; frontend checks, Debug APK, Android bridge tests, inspection and upload all passed. Downloaded artifact `13739732389` matches its checksum and Android Debug signature; see [Android CI record](android/ci.md). Earlier run `42644227600` remains historical evidence only. |
+| Tagged signed Release run `42766136682` | **PASS** | Tag `v0.1.0`, same integrated source. Frontend checks, signed build, bridge JVM tests, APK inspection/upload and GitHub Release publication passed. Downloaded APK checksum, release signature, manifest, API levels and ARM64 ABI independently verified. |
 | Windows / Android real device and live cloud | **USER MANUAL / NOT VERIFIED** | User U2 explicitly assigns all these checks to post-delivery manual testing. They do not block this delivery. No emulator, virtual device or live cloud provider was used. |
 
-The full-check count reflects the current dirty worktree and has grown beyond the
+The full-check count reflects the integrated source and has grown beyond the
 earlier 85-test snapshot as local-provider, registry, attachment, plugin and
 resumable-transfer tests were added.
 
@@ -34,6 +35,7 @@ npm run check
 
 $env:CARGO_HOME = 'E:\GITHUB\granite\.cache\cargo'
 $env:CARGO_TARGET_DIR = 'E:\GITHUB\granite\target\host-msvc'
+$env:RUSTUP_HOME = 'E:\GITHUB\granite\.cache\rustup'
 $env:RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-msvc'
 cargo +stable-x86_64-pc-windows-msvc check --locked --manifest-path src-tauri/Cargo.toml
 cargo +stable-x86_64-pc-windows-msvc test --locked --manifest-path src-tauri/Cargo.toml
@@ -52,12 +54,14 @@ npx playwright test --reporter=list
 
 ## Windows Evidence
 
-The current worktree produced an unsigned NSIS installer:
+The integrated source produced the final unsigned NSIS installer:
 
 - `target/host-msvc/release/bundle/nsis/Granite_0.1.0_x64-setup.exe`
-- Size: **7,958,401 bytes (7.96 MB)**
-- SHA-256: `C73339AE3D7BE6D1A57EDA0D685752D37F78076F4EF70CCD2096AB1F3710E2D8`
+- Size: **8,042,759 bytes (8.04 MB)**
+- SHA-256: `cfbd67a4fbaf48ceb629e04bce0a40774b52b658c4d72600e6400f3197ba22b1`
 - Authenticode: **NotSigned**
+- Delivery copy: `artifacts/release/Granite-0.1.0-windows-x64-setup.exe`
+- Native executable: 19,580,416 bytes; SHA-256 `8af2d0422a5350f45099d368c02a9ba4e881e16cc68ec3a4dba3d82bf539b8fc`; product/file version 0.1.0.
 
 A real current-user installation was observed earlier at
 `C:\Users\vexpaer\AppData\Local\Granite\granite.exe`:
@@ -72,7 +76,24 @@ application run will be performed; the user will manually validate the delivered
 
 ## Android And PDF Artifacts
 
-Local Debug APK:
+Final published Release APK:
+
+- [Granite-v0.1.0-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-v0.1.0-aarch64.apk)
+- Size: `22,971,439` bytes
+- SHA-256: `3ed49d4761613ca9b3b588798cf29f0f7dfcf80687dd5d43918de2940197499d`
+- Package `app.granite.reader`, version `0.1.0`, min API 24, target API 37,
+  `arm64-v8a`, not debuggable
+- Verified APK v2 signature, `CN=Granite Release, O=Granite`, RSA-3072;
+  certificate SHA-256 `e9fa2963910a71d0a48779be0616e7ba78100ee9ae76ab95447857691b0c9202`
+- CI artifact ID `13740835212`; published asset digest matches the downloaded
+  file and CI checksum
+- Local delivery copy: `artifacts/release/Granite-v0.1.0-aarch64.apk`
+
+The [published aggregate SHA256SUMS](https://github.com/vexpaer/granite/releases/download/v0.1.0/SHA256SUMS)
+contains both final Windows and Android package names and hashes. The source
+tag is `e8070f1`; later documentation commits record evidence only.
+
+Historical local Debug APK (superseded by the integrated CI artifacts):
 
 - `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
 - Package `app.granite.reader`, version `0.1.0`, min SDK 24, target/compile SDK 37

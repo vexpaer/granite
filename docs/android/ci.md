@@ -85,6 +85,15 @@ It contains JDK 17, API 37.0, build-tools 37.0.0, NDK 29.0.13846066, CMake
 3.22.1, and platform-tools 37.0.1. Cargo and Gradle use the workspace-local
 cache paths below. `.cache` is ignored by Git.
 
+The existing Gradle cache was copied to `.cache/gradle` on 2026-11-10 without
+removing or modifying `D:\Links\Users_vexpaer_.gradle`: 17,522 files,
+1,439,173,689 bytes. This includes wrapper distributions, dependency/build
+caches, native and Android cache data; regenerable `.tmp`, daemon and worker
+state were deliberately excluded. `gradlew.bat --version` exited 0 with
+Gradle 9.6.1 and the E-local JDK 17.0.21. The copied files and future project
+build caches stay on E:; earlier validation runs retain their original cache
+location in the evidence record.
+
 PowerShell setup for a local build:
 
 ```powershell
@@ -95,6 +104,8 @@ $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 $env:NDK_HOME = Join-Path $env:ANDROID_HOME 'ndk\29.0.13846066'
 $env:CARGO_HOME = 'E:\GITHUB\granite\.cache\cargo'
 $env:CARGO_TARGET_DIR = 'E:\GITHUB\granite\target'
+$env:RUSTUP_HOME = 'E:\GITHUB\granite\.cache\rustup'
+$env:RUSTUP_TOOLCHAIN = 'stable-x86_64-pc-windows-msvc'
 $env:GRADLE_USER_HOME = 'E:\GITHUB\granite\.cache\gradle'
 $env:PATH = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
 
@@ -126,7 +137,59 @@ CI uploads the Debug APK and inspection files. A successful job proves only the
 automated build and inspection path. It is not runtime evidence and does not
 turn any waived device or live-cloud check into a pass.
 
-## Verified Debug artifact
+## Integrated Debug artifact
+
+Run [`42765264307`](https://github.com/vexpaer/granite/actions/runs/42765264307)
+passed on 2026-11-10 for the final application source
+`e8070f13008edc0a3d40df846fc77d8d2e49f9ee` (also tagged `v0.1.0`). It includes
+the 130 frontend tests, Debug APK build, Android bridge JVM tests, signature and
+manifest inspection, and artifact upload.
+
+Downloaded artifact `13739732389`, named
+`granite-android-debug-e8070f13008edc0a3d40df846fc77d8d2e49f9ee`, was independently
+checked with the E-local JDK and SDK under `.cache/ci/e8070f1`:
+
+- APK size: `184643280` bytes
+- APK SHA-256: `3575192c987443fd186f94d1726dfb90719a1a1f4ae813b15c99ffd547d967a2`, matching the uploaded `SHA256SUMS`
+- Package `app.granite.reader`, version `0.1.0`, min SDK 24, target SDK 37,
+  debuggable
+- `SEND`, `SEND_MULTIPLE` and `enableOnBackInvokedCallback` are present in both
+  downloaded and independently extracted manifest evidence
+- APK v2 signature verifies with Android Debug certificate SHA-256
+  `2a7ec9c9ce893821400b3760e276ba8b86d550566da268ab0cd00d3805af0ee7`, matching
+  the artifact inspection report
+
+This Debug package is build evidence, not the signed Release APK or device
+runtime evidence. No installation or device run was performed.
+
+## Signed Release artifact
+
+Tag `v0.1.0` points to the same integrated source `e8070f1`. Signed Release run
+[`42766136682`](https://github.com/vexpaer/granite/actions/runs/42766136682)
+completed successfully: frontend checks, release-key configuration, Release APK
+build, bridge JVM tests, signature/manifest inspection, artifact upload and
+GitHub Release publication all passed. Artifact ID: `13740835212`.
+
+The published APK was downloaded to `.cache/ci/v0.1.0` and independently
+inspected with the E-local SDK:
+
+- File: `Granite-v0.1.0-aarch64.apk`
+- Size: `22971439` bytes
+- SHA-256: `3ed49d4761613ca9b3b588798cf29f0f7dfcf80687dd5d43918de2940197499d`, matching both CI's checksum and GitHub's asset digest
+- Package `app.granite.reader`, version `0.1.0`, version code `1000`, min API 24,
+  target/compile API 37
+- ARM64 `arm64-v8a` only, not debuggable
+- `SEND`, `SEND_MULTIPLE` and `enableOnBackInvokedCallback` present
+- APK v2 signature verifies; signer `CN=Granite Release, O=Granite`, RSA-3072
+- Signer certificate SHA-256:
+  `e9fa2963910a71d0a48779be0616e7ba78100ee9ae76ab95447857691b0c9202`
+
+[GitHub Release](https://github.com/vexpaer/granite/releases/tag/v0.1.0)
+contains this APK, the final unsigned Windows installer and an aggregate
+`SHA256SUMS`. Both packages are also copied under ignored `artifacts/release`.
+No device installation, app launch or live-provider test was performed.
+
+## Historical Debug artifact
 
 On 2026-11-09, GitHub Actions run
 [`42644227600`](https://github.com/vexpaer/granite/actions/runs/42644227600)

@@ -354,7 +354,7 @@ The specification proposes these mechanisms without fixing every implementation 
 | OPEN-05 | What user-facing product boundary should Notebook, reading time, and analytics use even if internally packaged as official plugins? | Core pages and first-release gate require these capabilities without exposing mandatory plugin installation; the suggested module tree puts them under `plugins/`. | L15, L155, L540-668, L1077-1079 |
 | OPEN-06 | What data transfer/recovery behavior is required if the user changes the local structured database engine or migrates a profile created by an older schema? | Versions/backups are required, but migration compatibility duration and format are unspecified. | L628, L1029 |
 | OPEN-07 | What performance thresholds fail release? | Baseline measurements are required; thresholds are not. | L47 |
-| OPEN-08 | Which exact physical Windows host and supported OS versions are sufficient for practical first-release coverage? | Real Windows verification remains mandatory. Android physical-device coverage is waived by U1, so device/OS selection is no longer an Android release prerequisite while CI APK gates remain active. | L670-682, L1056-1061; U1 |
+| OPEN-08 | Which physical Windows/Android hosts should the user cover after delivery? | U2 assigns all actual-device application checks to the user's manual testing; no device/OS selection blocks this delivery. Android CI APK gates remain active. | L670-682, L1056-1061; U2 |
 
 ## Implementation Notes That Must Not Change Product Decisions
 

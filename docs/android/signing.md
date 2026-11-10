@@ -1,6 +1,6 @@
 # Android APK signing and release secrets
 
-Release signing is configured only during the tagged Release job. Debug builds
+Release signing is configured during tagged Release or manually dispatched candidate jobs. Debug builds
 use Android's normal debug key. Do not commit a Java keystore,
 `keystore.properties`, passwords, or base64 secret values.
 
@@ -17,8 +17,14 @@ Create these repository secrets in `vexpaer/granite`:
 
 `scripts/android-configure-signing.mjs` writes the decoded keystore and a
 private properties file below `src-tauri/gen/android/app`, adds a release
-`signingConfig` to the generated Gradle file, and leaves Git-tracked source
-unchanged. The files are ignored and the CI runner is ephemeral.
+`signingConfig` to the runner's generated Gradle file. The repository history is
+unchanged; the keystore and properties are ignored and the CI runner is ephemeral.
+
+The existing Granite release identity is already stored under the ignored
+`private/signing` directory and its four repository secrets are configured. Do
+not generate a replacement key for updates. See [signing.md](../signing.md) for
+the existing identity's backup and DPAPI recovery limits. The following setup
+steps are for a separate, new installation only.
 
 ## Generate a release key
 
@@ -51,11 +57,7 @@ From PowerShell, with the same alias and passwords used above:
 $keyDir = 'E:\GITHUB\granite\.cache\android-signing'
 [Convert]::ToBase64String(
   [IO.File]::ReadAllBytes("$keyDir\granite-release.jks")
-) | Set-Content -NoNewline "$keyDir\granite-release.jks.base64"
-
-gh secret set ANDROID_KEYSTORE_BASE64 `
-  --repo vexpaer/granite `
-  < "$keyDir\granite-release.jks.base64"
+) | gh secret set ANDROID_KEYSTORE_BASE64 --repo vexpaer/granite
 
 gh secret set ANDROID_KEYSTORE_PASSWORD --repo vexpaer/granite
 gh secret set ANDROID_KEY_ALIAS --repo vexpaer/granite
@@ -65,8 +67,9 @@ gh secret set ANDROID_KEY_PASSWORD --repo vexpaer/granite
 For the last three commands, `gh` prompts without echoing the value. Do not put
 a real password in a committed file or command-line argument.
 
-After upload, remove the base64 copy if it is no longer needed. Keep the
-keystore and recovery data outside the repository or in the ignored cache.
+This sends the base64 through standard input without writing a second key
+file. Keep the keystore and recovery data outside tracked files or in an ignored
+private directory.
 
 ## Manual signed candidate
 

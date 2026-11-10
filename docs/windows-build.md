@@ -1,6 +1,8 @@
 # Granite Windows build record
 
-Status: **validation record, not a published release**
+Status: **final v0.1.0 build and published artifact record**
+
+The final installer below is published in [Granite v0.1.0](https://github.com/vexpaer/granite/releases/tag/v0.1.0) as `Granite-0.1.0-windows-x64-setup.exe`. Its uploaded SHA-256 matches the local build. The release tag is `e8070f1`; later documentation updates record the evidence without changing application code.
 
 This record covers the first-release Windows host owned by `src-tauri/**` and the
 Windows packaging path. Android build and device evidence are recorded separately.
@@ -168,7 +170,7 @@ installer was installed.
   not block artifact delivery.
 - The final rebuilt installer was not executed or installed in this native-agent
   pass. No UI, device, native CDP, or live-provider test was run.
-- This record does not publish a release, commit signing material, or claim
-  Android runtime verification. The unsigned artifact status is recorded above.
+- Publication is recorded above; no signing material is committed and no
+  Android runtime verification is claimed. The Windows artifact is unsigned.
 - Frontend build warnings about bundle size and static/dynamic imports are not
   native build failures. They remain visible for the owning frontend workstream.

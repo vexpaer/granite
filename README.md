@@ -2,6 +2,14 @@
 
 免费开源、Local-first、插件优先的私人数字书房。面向 Windows 与 Android，基于 Tauri 2、Rust、Vue 3、TypeScript 与 Cordis，无需 Granite 账号或常驻服务器。
 
+## 下载 v0.1.0
+
+- [Windows x64 安装包](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-0.1.0-windows-x64-setup.exe)（8.04 MB，未做 Windows 代码签名，需要 WebView2）
+- [Android ARM64 APK](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-v0.1.0-aarch64.apk)（22.97 MB，发布密钥签名，Android 7.0 / API 24 起）
+- [发布说明](https://github.com/vexpaer/granite/releases/tag/v0.1.0) · [SHA-256 校验清单](https://github.com/vexpaer/granite/releases/download/v0.1.0/SHA256SUMS)
+
+首版包含 EPUB/PDF/TXT/MOBI 阅读、PDF 标注直接写回、多书库、Markdown 笔记与附件、标签、统计、备份、WebDAV/S3 同步和 Cordis 插件。自动化检查与产物校验已通过；实机运行与真实云端测试按用户要求交由交付后手测，尚未验证。完整缓冲操作上限为 512 MiB，详见[验收记录](docs/acceptance.md)和[手测清单](docs/user-manual-checklist.md)。
+
 ## 开发
 
 ```powershell

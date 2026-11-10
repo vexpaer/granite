@@ -12,12 +12,13 @@ Updated 2026-11-10 (Asia/Shanghai). The authoritative specification and user upd
 | Native Windows host | MSVC checks and 48 tests passed, including metadata-only external attachment preservation. |
 | Android bridge | Kotlin 16 tests, `assembleDebug` and aarch64 Rust check passed. |
 | Latest Windows installer | Final unsigned NSIS built: 8,042,759 bytes; version 0.1.0; SHA-256 `cfbd67a4fbaf48ceb629e04bce0a40774b52b658c4d72600e6400f3197ba22b1`. |
-| Latest Android CI Debug APK | Pending integrated-source push. Earlier run [42644227600](https://github.com/vexpaer/granite/actions/runs/42644227600) passed and its downloaded artifact was verified; it covers commit `4203e6d`, not the latest local changes. |
-| Signed APK and tagged release | Pending the integrated candidate. Signing material stays outside Git; CI verifies the APK before publication. |
+| Latest Android CI Debug APK | Passed run [42765264307](https://github.com/vexpaer/granite/actions/runs/42765264307), source `e8070f1`. Downloaded artifact `13739732389` matches its checksum; package and signature verified. |
+| Signed APK and tagged release | Passed: [42766136682](https://github.com/vexpaer/granite/actions/runs/42766136682), tag `v0.1.0`, source `e8070f1`. Downloaded Release APK is 22,971,439 bytes; SHA-256 `3ed49d4761613ca9b3b588798cf29f0f7dfcf80687dd5d43918de2940197499d`; release signature, ARM64 ABI, package/version, API levels and manifest verified. |
+| Published delivery | [v0.1.0](https://github.com/vexpaer/granite/releases/tag/v0.1.0) contains both platform packages and aggregate `SHA256SUMS`. Windows installer remains unsigned; Android uses the project release key. |
 | Windows / Android real-device application checks | USER MANUAL / NOT VERIFIED — deferred by U2; not a delivery gate. |
 | Live cloud authentication, upload/download and cross-device checks | USER MANUAL / NOT VERIFIED — deferred by U2; no credentials requested and no live service test performed. |
 
-There is no current first-release completion claim until the remaining builds, artifact checks and publication finish. User-manual items must never be relabeled as passed automated checks.
+The revised first-release delivery gates are complete. User-manual items remain unverified and must never be relabeled as passed automated checks. The release tag retains the tested application source; follow-up documentation commits only record its evidence.
 
 ## Resolved implementation findings
 

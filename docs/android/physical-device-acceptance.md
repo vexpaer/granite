@@ -176,9 +176,9 @@ device serial (private evidence), model, Android API level, and run timestamp.
 
 | Gate | Status |
 | --- | --- |
-| Latest integrated Debug CI and APK artifact | Pending the new integrated commit; `4203e6d` is prior-version evidence only |
-| Manual signed candidate APK | Pending the new integrated commit |
-| Tagged signed Release APK | Only if a release tag is created after source/tests and candidate checks are green |
+| Latest integrated Debug CI and APK artifact | PASS: run `42765264307`, source `e8070f1`, artifact `13739732389`; downloaded checksum, manifest and Debug signature verified |
+| Manual signed candidate APK | Not required; the verified Debug source proceeds directly to the tagged signed Release build |
+| Tagged signed Release APK | PASS: tag `v0.1.0`, source `e8070f1`, run `42766136682`, artifact `13740835212`; downloaded Release APK checksum/signature/manifest/ARM64 ABI verified and published |
 | Physical install/startup/touch/restart | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
 | SAF persistence/revocation | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
 | Share single/multiple | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
