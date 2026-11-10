@@ -27,7 +27,7 @@ defineEmits<{ back: [] }>();
     </button>
     <div class="page-header__copy">
       <span v-if="eyebrow" class="eyebrow">{{ eyebrow }}</span>
-      <h1>{{ title }}</h1>
+      <h1 v-if="title">{{ title }}</h1>
       <p v-if="description">{{ description }}</p>
     </div>
     <div v-if="$slots.actions" class="page-header__actions"><slot name="actions" /></div>

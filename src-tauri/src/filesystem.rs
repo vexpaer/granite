@@ -152,17 +152,29 @@ pub fn read_book(root: &LibraryRoot, relative_path: &str) -> HostResult<Vec<u8>>
     read_file(&path)
 }
 
+#[cfg(test)]
 pub fn write_book(
     root: &LibraryRoot,
     relative_path: &str,
     bytes: &[u8],
     backup_root: &Path,
 ) -> HostResult<WrittenBook> {
+    write_book_with_expected_sha256(root, relative_path, bytes, backup_root, None)
+}
+
+pub fn write_book_with_expected_sha256(
+    root: &LibraryRoot,
+    relative_path: &str,
+    bytes: &[u8],
+    backup_root: &Path,
+    expected_source_sha256: Option<&str>,
+) -> HostResult<WrittenBook> {
     if bytes.is_empty() {
         return Err(HostError::InvalidArgs(
             "refusing to replace a book with an empty file".into(),
         ));
     }
+    let expected_source_sha256 = expected_source_sha256.map(normalize_sha256).transpose()?;
     let target = safe_existing_file(root, relative_path)?;
     let metadata = fs::metadata(&target)
         .map_err(|error| HostError::io("failed to inspect book before write", error))?;
@@ -170,6 +182,12 @@ pub fn write_book(
         return Err(HostError::Forbidden(
             "book file is read-only; no bytes were written".into(),
         ));
+    }
+    if let Some(expected_hash) = expected_source_sha256.as_deref() {
+        let current_hash = sha256_file(&target)?;
+        if current_hash != expected_hash {
+            return Err(book_changed_conflict(&current_hash, expected_hash));
+        }
     }
 
     let safe_root = require_filesystem_root(root, true)?;
@@ -179,12 +197,26 @@ pub fn write_book(
         &safe_root.canonical_path,
         relative_path,
         &target,
+        expected_source_sha256.as_deref(),
     )?;
     let expected_hash = sha256_bytes(bytes);
     let parent = target
         .parent()
         .ok_or_else(|| HostError::Forbidden("book has no safe parent directory".into()))?;
     let temporary = write_temporary_verified(parent, bytes)?;
+    if let Some(expected_source_hash) = expected_source_sha256.as_deref() {
+        match sha256_file(&target) {
+            Ok(current_hash) if current_hash == expected_source_hash => {}
+            Ok(current_hash) => {
+                cleanup_temporary(&temporary);
+                return Err(book_changed_conflict(&current_hash, expected_source_hash));
+            }
+            Err(error) => {
+                cleanup_temporary(&temporary);
+                return Err(error);
+            }
+        }
+    }
     if let Err(error) = commit_replace(&temporary.path, &target) {
         cleanup_temporary(&temporary);
         return Err(error);
@@ -216,18 +248,33 @@ pub fn write_book(
     })
 }
 
+fn normalize_sha256(value: &str) -> HostResult<String> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(HostError::InvalidArgs(
+            "expectedSha256 must contain exactly 64 hexadecimal characters".into(),
+        ));
+    }
+    Ok(value.to_ascii_lowercase())
+}
+
+fn book_changed_conflict(actual_hash: &str, expected_hash: &str) -> HostError {
+    HostError::Conflict(format!(
+        "book changed after it was loaded; expected SHA-256 {expected_hash}, found {actual_hash}; the current file was preserved"
+    ))
+}
+
 pub fn reveal_file(root: &LibraryRoot, relative_path: &str) -> HostResult<bool> {
     let path = safe_existing_file(root, relative_path)?;
     reveal_path(&path)
 }
 
 pub fn trash_book(root: &LibraryRoot, relative_path: &str, book_id: &str) -> HostResult<()> {
-    let source = safe_existing_file(root, relative_path)?;
-    if format_from_path(&source).is_none() {
-        return Err(HostError::Unsupported(
-            "only managed book files can be moved to trash".into(),
+    if !is_managed_book_path(relative_path)? {
+        return Err(HostError::Forbidden(
+            "only Granite-managed books can be moved to recoverable trash".into(),
         ));
     }
+    let source = safe_existing_file(root, relative_path)?;
     let safe_root = require_filesystem_root(root, true)?;
     let source_hash = sha256_file(&source)?;
     let safe_id = crate::paths::sanitize_component(book_id)?;
@@ -269,6 +316,24 @@ pub fn trash_book(root: &LibraryRoot, relative_path: &str, book_id: &str) -> Hos
     Err(HostError::Storage(format!(
         "book trash move failed verification; {detail}"
     )))
+}
+
+fn is_managed_book_path(relative_path: &str) -> HostResult<bool> {
+    let relative = safe_relative_path(relative_path)?;
+    let components: Vec<_> = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect();
+    Ok(matches!(
+        components.as_slice(),
+        [books, book_directory, file_name]
+            if *books == "books"
+                && Uuid::parse_str(book_directory).is_ok()
+                && format_from_path(Path::new(file_name)).is_some()
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -674,13 +739,19 @@ fn create_file_backup(
     canonical_root: &Path,
     relative_path: &str,
     target: &Path,
+    expected_source_sha256: Option<&str>,
 ) -> HostResult<PathBuf> {
+    let source_hash = sha256_file(target)?;
+    if let Some(expected_hash) = expected_source_sha256 {
+        if source_hash != expected_hash {
+            return Err(book_changed_conflict(&source_hash, expected_hash));
+        }
+    }
     let root_key = sha256_bytes(canonical_root.to_string_lossy().as_bytes());
     let file_key = sha256_bytes(relative_path.as_bytes());
     let backup_directory = backup_root.join(&root_key[..16]).join(&file_key[..16]);
     fs::create_dir_all(&backup_directory)
         .map_err(|error| HostError::io("failed to create private backup directory", error))?;
-    let source_hash = sha256_file(target)?;
     let extension = target
         .extension()
         .and_then(|value| value.to_str())
@@ -908,6 +979,42 @@ mod tests {
             .into_iter()
             .filter_map(Result::ok)
             .any(|entry| entry.file_name().to_string_lossy().ends_with(".bak")));
+
+        let conditionally_written = write_book_with_expected_sha256(
+            &root,
+            &imported.relative_path,
+            b"third edition",
+            private.path(),
+            Some(&written.sha256),
+        )
+        .expect("conditional safe rewrite");
+        assert_eq!(conditionally_written.sha256, sha256_bytes(b"third edition"));
+    }
+
+    #[test]
+    fn expected_hash_conflict_preserves_external_bytes_without_backup_or_replacement() {
+        let library = tempdir().expect("library");
+        let private = tempdir().expect("private");
+        let root = make_default_root(library.path().to_path_buf());
+        let imported = import_book(&root, "Book.pdf", b"loaded edition").expect("import");
+        let loaded_sha256 = imported.sha256.clone();
+        let target = library.path().join(&imported.relative_path);
+        let external_bytes = b"external edit after load";
+        fs::write(&target, external_bytes).expect("external mutation");
+
+        let result = write_book_with_expected_sha256(
+            &root,
+            &imported.relative_path,
+            b"app replacement",
+            private.path(),
+            Some(&loaded_sha256),
+        );
+        assert!(matches!(result, Err(HostError::Conflict(_))));
+        assert_eq!(fs::read(&target).expect("preserved target"), external_bytes);
+        assert!(WalkDir::new(private.path())
+            .into_iter()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().ends_with(".bak")));
     }
 
     #[test]
@@ -952,6 +1059,20 @@ mod tests {
                 entry.file_type().is_file()
                     && fs::read(entry.path()).ok().as_deref() == Some(b"recoverable book")
             }));
+    }
+
+    #[test]
+    fn trash_refuses_to_move_an_external_book() {
+        let library = tempdir().expect("library");
+        let external = library.path().join("external.pdf");
+        fs::write(&external, b"external original").expect("external book");
+        let root = make_default_root(library.path().to_path_buf());
+
+        assert!(trash_book(&root, "external.pdf", "book-1").is_err());
+        assert_eq!(
+            fs::read(&external).expect("external file remains"),
+            b"external original"
+        );
     }
 
     #[test]

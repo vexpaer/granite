@@ -33,4 +33,5 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.15.3")
     implementation(project(":tauri-android"))
+    testImplementation("junit:junit:4.13.2")
 }

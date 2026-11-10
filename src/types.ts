@@ -120,7 +120,7 @@ export interface ReadingSession {
 }
 export interface ProviderProfile {
   id: string;
-  type: "webdav" | "s3";
+  type: "webdav" | "s3" | "local";
   name: string;
   endpoint: string;
   username?: string;
@@ -129,6 +129,7 @@ export interface ProviderProfile {
   prefix: string;
   credentialId: string;
   accessKeyId?: string;
+  root?: LibraryRoot;
 }
 export interface AppSettings {
   username: string;

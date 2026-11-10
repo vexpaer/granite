@@ -13,7 +13,7 @@ test('offline library, EPUB reading, notes and restart preserve user data',async
   await page.getByText('山间阅读手记',{exact:true}).first().click();
   await page.getByRole('button',{name:'开始阅读',exact:true}).click();
   await expect(page.locator('.reader-view')).toBeVisible();
-  await page.screenshot({path:'artifacts/screenshots/reader-epub.png',fullPage:true});
+  await page.screenshot({path:'artifacts/screenshots/reader-epub.png',fullPage:true,animations:'disabled'});
   await page.keyboard.press('Escape');
   // Toolbar/back behavior is tested through its visible accessible action after load.
   const back=page.getByRole('button',{name:/退出阅读|返回书库|返回.*详情|返回/}).first();
@@ -23,7 +23,7 @@ test('offline library, EPUB reading, notes and restart preserve user data',async
   await page.getByRole('textbox',{name:'笔记标题',exact:true}).fill('离线保存与恢复');
   await page.getByRole('textbox',{name:'Markdown 正文',exact:true}).fill('# 山间\n\n离线也能写作。[[阅读索引]]');
   await expect(page.getByText('已保存',{exact:true}).first()).toBeVisible();
-  await page.screenshot({path:'artifacts/screenshots/notebook.png',fullPage:true});
+  await page.screenshot({path:'artifacts/screenshots/notebook.png',fullPage:true,animations:'disabled'});
   await page.reload();
   await expect(page.getByRole('textbox',{name:'笔记标题',exact:true})).toHaveValue('离线保存与恢复');
   await expect(page.getByRole('textbox',{name:'Markdown 正文',exact:true})).toHaveValue('# 山间\n\n离线也能写作。[[阅读索引]]');
@@ -34,9 +34,9 @@ test('empty state, desktop navigation and compact layout remain usable',async({p
   await page.goto('/');await expect(page.getByRole('navigation',{name:'主导航'})).toBeVisible();
   const nav=page.getByRole('navigation',{name:'主导航'});
   for(const name of ['主页','书架','笔记','统计'])await expect(nav.getByRole('button',{name,exact:true})).toBeVisible();
-  await page.screenshot({path:'artifacts/screenshots/home-empty.png',fullPage:true});
+  await page.screenshot({path:'artifacts/screenshots/home-empty.png',fullPage:true,animations:'disabled'});
   await page.setViewportSize({width:390,height:844});
   await expect(nav.getByRole('button',{name:'书架',exact:true})).toBeVisible();
-  await page.screenshot({path:'artifacts/screenshots/compact-browser.png',fullPage:true});
+  await page.screenshot({path:'artifacts/screenshots/compact-browser.png',fullPage:true,animations:'disabled'});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth)).toBe(false);
 });

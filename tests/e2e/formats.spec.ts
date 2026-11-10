@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import path from 'node:path';
-test('all four formats render, search, bookmark and restore',async({page})=>{
+test('all four formats render, search and bookmark',async({page})=>{
   test.setTimeout(120000);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/');await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'书架',exact:true}).click();await page.getByRole('button',{name:'导入书籍',exact:true}).first().click();
   await page.locator('input[type=file][accept*=".epub"]').setInputFiles([path.resolve('.cache/fixtures/山间阅读手记.epub'),path.resolve('.cache/fixtures/Granite Field Notes.pdf'),path.resolve('.cache/fixtures/Granite Field Notes.txt'),path.resolve('src/reader/__fixtures__/Around-the-World.mobi')]);

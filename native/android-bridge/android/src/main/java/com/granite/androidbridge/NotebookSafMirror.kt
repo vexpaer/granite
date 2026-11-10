@@ -70,8 +70,10 @@ internal class NotebookSafMirror(
                 indexedPath = previousIndex.entries[id]?.relativePath,
                 usedPaths = usedPaths,
             )
-            val document = renderMarkdown(note as ObjectNode, id, title, folder, body)
+            val noteObject = note as ObjectNode
+            val document = renderMarkdown(noteObject, id, title, folder, body)
             val bytes = document.toByteArray(Charsets.UTF_8)
+            materializeAttachments(notebook, relativePath, noteObject)
             writeAtomic(notebook, relativePath, "text/markdown", bytes)
 
             val entry = nextEntries.putObject(id)
@@ -236,6 +238,147 @@ internal class NotebookSafMirror(
         }
         val yaml = yamlMapper.writeValueAsString(metadata).trimEnd()
         return "---\n$yaml\n---\n\n$body"
+    }
+
+    private fun materializeAttachments(
+        notebook: DocumentFile,
+        noteRelativePath: String,
+        note: ObjectNode,
+    ): Int {
+        val attachments = note.get("attachments") ?: return 0
+        if (attachments.isNull) return 0
+        if (!attachments.isArray) {
+            throw BridgeFailure("Notebook attachments must be an array")
+        }
+
+        var materialized = 0
+        for (attachment in attachments) {
+            if (!attachment.isObject) {
+                throw BridgeFailure("A Notebook attachment is not an object")
+            }
+            val name = attachment.path("name").takeIf(JsonNode::isTextual)?.asText()
+            if (name.isNullOrBlank()) {
+                throw BridgeFailure("A Notebook attachment has no name")
+            }
+            val portablePath = attachment.path("path")
+                .takeIf(JsonNode::isTextual)
+                ?.asText()
+                ?: throw BridgeFailure("Notebook attachment '$name' has no portable path")
+            val parsedPath = NotebookAttachmentRules.portablePath(portablePath)
+            val dataNode = attachment.get("data")
+            if (dataNode == null || dataNode.isNull) continue
+            if (!dataNode.isTextual) {
+                throw BridgeFailure("Notebook attachment '$name' data is not a string")
+            }
+            val decoded = NotebookAttachmentRules.decodeDataUrl(
+                dataNode.asText(),
+                parsedPath.sha256,
+            )
+            val target = NotebookAttachmentRules.relativeToNote(
+                noteRelativePath,
+                parsedPath,
+            )
+            materializeContentAddressedAttachment(
+                notebook,
+                target,
+                decoded.mediaType,
+                decoded.bytes,
+                parsedPath.sha256,
+            )
+            materialized++
+        }
+        return materialized
+    }
+
+    private fun materializeContentAddressedAttachment(
+        notebook: DocumentFile,
+        relativePath: String,
+        mimeType: String,
+        bytes: ByteArray,
+        expectedHash: String,
+    ) {
+        val (parent, name) = ensureParent(notebook, relativePath)
+        val existing = parent.findFile(name)
+        if (existing != null) {
+            verifyAttachmentFile(existing, expectedHash)
+            return
+        }
+
+        val temporary = parent.createFile(
+            "application/octet-stream",
+            ".granite-attachment-${UUID.randomUUID()}",
+        ) ?: throw BridgeFailure("The SAF root does not allow a temporary attachment")
+        var created: DocumentFile? = null
+        try {
+            writeBytes(temporary, bytes)
+            if (sha256File(temporary) != expectedHash) {
+                throw BridgeFailure("Temporary Notebook attachment verification failed")
+            }
+
+            val raced = parent.findFile(name)
+            if (raced != null) {
+                verifyAttachmentFile(raced, expectedHash)
+                return
+            }
+
+            if (temporary.renameTo(name)) {
+                created = parent.findFile(name)
+                    ?: throw BridgeFailure("Notebook attachment disappeared after creation")
+            } else {
+                val racedAfterRename = parent.findFile(name)
+                if (racedAfterRename != null) {
+                    verifyAttachmentFile(racedAfterRename, expectedHash)
+                    return
+                }
+                val replacement = parent.createFile(mimeType, name)
+                    ?: throw BridgeFailure("The SAF root could not create the Notebook attachment")
+                if (replacement.name != name || !replacement.isFile) {
+                    replacement.delete()
+                    throw BridgeFailure(
+                        "The SAF provider changed the Notebook attachment filename",
+                    )
+                }
+                created = replacement
+                copy(temporary, replacement)
+            }
+
+            val target = created
+                ?: throw BridgeFailure("Notebook attachment was not created")
+            verifyAttachmentFile(target, expectedHash)
+        } catch (exception: Exception) {
+            created
+                ?.takeIf { it.exists() && parent.findFile(name)?.uri == it.uri }
+                ?.delete()
+            throw exception
+        } finally {
+            if (temporary.exists()) temporary.delete()
+        }
+    }
+
+    private fun verifyAttachmentFile(file: DocumentFile, expectedHash: String) {
+        if (!file.isFile || !file.exists()) {
+            throw BridgeFailure("Notebook attachment path conflicts with a non-file object")
+        }
+        if (sha256File(file) != expectedHash) {
+            throw BridgeFailure(
+                "Notebook attachment path already contains different content",
+            )
+        }
+    }
+
+    private fun sha256File(file: DocumentFile): String {
+        val input = context.openUriInputStream(file.uri)
+            ?: throw BridgeFailure("Android could not verify a Notebook attachment")
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        return input.use { stream ->
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+            digest.digest().toHex()
+        }
     }
 
     private fun scanMarkdown(notebook: DocumentFile): List<DiskNote> {
@@ -457,6 +600,9 @@ internal class NotebookSafMirror(
     private fun writeAtomic(root: DocumentFile, relativePath: String, mimeType: String, bytes: ByteArray) {
         val (parent, name) = ensureParent(root, relativePath)
         val target = parent.findFile(name)
+        if (target != null && !target.isFile) {
+            throw BridgeFailure("Notebook target path is not a regular file")
+        }
         val temporary = parent.createFile(
             "application/octet-stream",
             ".granite-note-${UUID.randomUUID()}",

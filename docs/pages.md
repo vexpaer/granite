@@ -220,8 +220,9 @@ override system Back, core Reader gestures, or accessibility controls.
 
 ## Platform Evidence
 
-Android physical-device verification is waived by the user on 2026-11-09. The
-route and responsive contracts remain implementation requirements. Android CI and
-APK build/artifact checks remain required, and emulator-based evidence is
-prohibited. No document may claim Android runtime verification without separate
-evidence.
+User U2 (2026-11-10) assigns every Windows/Android real-device application check
+and live-cloud check to the user's post-delivery manual testing. The route and
+responsive contracts remain implementation requirements. Local automated tests,
+native builds, Android CI, signatures and artifact checks remain required.
+Emulators remain prohibited. Browser screenshots do not claim native runtime
+verification, and user-manual checks are not recorded as passed.

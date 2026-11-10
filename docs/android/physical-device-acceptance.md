@@ -1,24 +1,32 @@
-# Android physical-device acceptance runbook
+# Deferred Android and live-provider acceptance runbook
 
 ## Current status
 
-**WAIVED by the user on 2026-11-09.** Physical Android installation and runtime
-verification are not a blocker for this task and no device evidence is
-requested. This waiver does not mean the checks passed.
+**WAIVED for this delivery.** The user clarified on 2026-11-10 that all real
+Android-device checks and live WebDAV, S3, and cross-device cloud checks will be
+performed manually later. They are not blockers and no device or live-provider
+evidence is requested now. This waiver does not mean the checks passed.
 
-Android CI, Debug APK generation/artifact upload, tagged signed Release APK
-generation, signature inspection, and checksums remain required. No emulator,
-simulator, virtual device, or Android UI automation may substitute for the
-waived physical run.
+Android CI, bridge unit tests, target compilation, Debug APK generation/artifact
+upload, signed candidate generation, signature inspection, checksums, and
+manifest dumps remain required. No emulator, simulator, virtual device, or
+Android UI automation may substitute for the deferred physical run.
 
 As of this document:
 
 - No physical-device result is claimed.
-- No attached `adb` target was present at the last read-only inspection.
 - No package was installed on any device.
+- No live WebDAV, S3, or cross-device cloud result is claimed.
 - CI and local APK evidence are recorded separately in `ci.md`.
 
-## Safety rule for any later run
+## Deferred live provider checks
+
+The user will manually check real WebDAV and S3 connections, credential use,
+range reads, conditional replacement, prefix isolation, restore/recovery, and
+cross-device synchronization later. No real endpoint, credential, bucket, or
+cross-device state is needed for this delivery.
+
+## Safety rule for any later assisted check
 
 Do not use `adb` without an explicit `-s <serial>` once a device is attached.
 First identify the target with:
@@ -49,7 +57,7 @@ Only after target identification:
 adb -s <serial> install -r <verified-debug-apk>
 ```
 
-## Acceptance checklist for a future authorized run
+## User manual checklist after this delivery
 
 Use disposable test books and backup any test-only state. Record the APK SHA-256,
 device serial (private evidence), model, Android API level, and run timestamp.
@@ -168,13 +176,15 @@ device serial (private evidence), model, Android API level, and run timestamp.
 
 | Gate | Status |
 | --- | --- |
-| Debug CI and APK artifact | Pending successful pushed run |
-| Tagged signed Release APK | Pending a version tag and configured secrets |
-| Physical install/startup | **WAIVED 2026-11-09; not run** |
-| SAF persistence/revocation | **WAIVED 2026-11-09; not run** |
-| Share single/multiple | **WAIVED 2026-11-09; not run** |
-| Lifecycle, immersive, keep-awake, Back | **WAIVED 2026-11-09; not run** |
-| Keystore provider use | **WAIVED 2026-11-09; not run** |
+| Latest integrated Debug CI and APK artifact | Pending the new integrated commit; `4203e6d` is prior-version evidence only |
+| Manual signed candidate APK | Pending the new integrated commit |
+| Tagged signed Release APK | Only if a release tag is created after source/tests and candidate checks are green |
+| Physical install/startup/touch/restart | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
+| SAF persistence/revocation | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
+| Share single/multiple | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
+| Lifecycle, immersive, keep-awake, Back | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
+| Real WebDAV/S3/cross-device cloud | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
+| Keystore-backed live provider use | **WAIVED 2026-11-10; user manual test later; not run, not PASS** |
 
 Update this table only from observed evidence. CI logs do not close waived
 runtime rows, and an emulator result is never acceptable evidence.

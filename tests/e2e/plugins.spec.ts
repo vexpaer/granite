@@ -1,8 +1,17 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 test.use({ browserName: 'chromium' });
+
+test.beforeEach(async ({ page }) => {
+  const csp = JSON.parse(readFileSync(path.resolve('src-tauri/tauri.conf.json'), 'utf8')).app.security.csp;
+  await page.route('http://127.0.0.1:1421/', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, headers: { ...response.headers(), 'content-security-policy': csp } });
+  });
+});
 
 const pluginId = 'qa.granite.sandbox';
 const pluginName = 'Sandbox QA Probe';

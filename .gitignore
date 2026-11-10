@@ -23,3 +23,6 @@ src-tauri/icons/ios/
 src-tauri/icons/icon.icns
 .DS_Store
 artifacts/private/
+artifacts/android/
+artifacts/release/
+artifacts/screenshots/installed-granite.png

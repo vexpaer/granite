@@ -38,6 +38,14 @@ internal fun requiredBoolean(node: JsonNode?, field: String): Boolean {
     return value.asBoolean()
 }
 
+internal fun requiredLong(node: JsonNode?, field: String): Long {
+    val value = node?.get(field)
+    if (value == null || !value.isIntegralNumber || !value.canConvertToLong()) {
+        throw BridgeFailure("Missing required integer field: $field")
+    }
+    return value.longValue()
+}
+
 internal fun requiredRoot(node: JsonNode?): JsonNode {
     val root = node?.get("root")
     if (root == null || !root.isObject) {
@@ -47,8 +55,14 @@ internal fun requiredRoot(node: JsonNode?): JsonNode {
 }
 
 internal fun bytesFromNode(node: JsonNode?, field: String): ByteArray {
-    val value = node?.get(field)
-        ?: throw BridgeFailure("Missing required byte array: $field")
+    return bytesFromJson(
+        node?.get(field) ?: throw BridgeFailure("Missing required byte array: $field"),
+        field,
+    )
+}
+
+internal fun bytesFromJson(json: JsonNode, field: String): ByteArray {
+    val value = json
     if (!value.isArray) throw BridgeFailure("Field $field must be a byte array")
     val bytes = ByteArray(value.size())
     for (index in 0 until value.size()) {

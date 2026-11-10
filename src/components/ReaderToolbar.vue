@@ -20,6 +20,7 @@ import {
   ZoomOut,
 } from 'lucide-vue-next';
 import type { Format } from '../types';
+import ProgressRing from './ProgressRing.vue';
 import type {
   PdfFitMode,
   ReaderPanelName,
@@ -112,8 +113,19 @@ function submitPage(): void {
 function jumpProgress(event: MouseEvent): void {
   const target = event.currentTarget as HTMLElement;
   const rect = target.getBoundingClientRect();
-  const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+  const dx = event.clientX - rect.left - rect.width / 2;
+  const dy = event.clientY - rect.top - rect.height / 2;
+  const fraction = ((Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2);
   emit('progress-jump', fraction);
+}
+
+function beginProgress(event: PointerEvent): void {
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  jumpProgress(event);
+}
+
+function stepProgress(delta: number): void {
+  emit('progress-jump', Math.min(1, Math.max(0, (progressPercent.value + delta) / 100)));
 }
 </script>
 
@@ -317,20 +329,28 @@ function jumpProgress(event: MouseEvent): void {
         <Minimize2 v-if="fullscreen" :size="18" />
         <Maximize2 v-else :size="18" />
       </button>
+      <button
+        class="reader-toolbar__progress"
+        type="button"
+        role="slider"
+        aria-label="阅读进度，拖动圆环跳转"
+        :aria-valuenow="progressPercent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        @pointerdown="beginProgress"
+        @pointermove="($event.buttons & 1) && jumpProgress($event)"
+        @keydown.left.prevent="stepProgress(-1)"
+        @keydown.down.prevent="stepProgress(-1)"
+        @keydown.right.prevent="stepProgress(1)"
+        @keydown.up.prevent="stepProgress(1)"
+        @keydown.page-up.prevent="stepProgress(-10)"
+        @keydown.page-down.prevent="stepProgress(10)"
+        @keydown.home.prevent="emit('progress-jump', 0)"
+        @keydown.end.prevent="emit('progress-jump', 1)"
+      >
+        <ProgressRing :value="progressPercent" :size="34" :stroke="2.5" aria-hidden="true"><span>{{ progressPercent }}%</span></ProgressRing>
+      </button>
     </div>
-
-    <button
-      class="reader-toolbar__progress"
-      type="button"
-      role="slider"
-      aria-label="阅读进度，点击跳转"
-      :aria-valuenow="progressPercent"
-      aria-valuemin="0"
-      aria-valuemax="100"
-      @click="jumpProgress"
-    >
-      <span :style="{ width: `${progressPercent}%` }"></span>
-    </button>
   </header>
 </template>
 
@@ -528,25 +548,20 @@ function jumpProgress(event: MouseEvent): void {
 }
 
 .reader-toolbar__progress {
-  position: absolute;
-  right: 14px;
-  bottom: -1px;
-  left: 14px;
-  overflow: hidden;
-  height: 2px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 50%;
+  color: var(--text-secondary);
   background: transparent;
+  font-size: 0.54rem;
+  font-variant-numeric: tabular-nums;
+  touch-action: none;
   cursor: pointer;
-}
-
-.reader-toolbar__progress span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-  transition: width 180ms linear;
 }
 
 @media (max-width: 1100px) {

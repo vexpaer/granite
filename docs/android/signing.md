@@ -68,6 +68,15 @@ a real password in a committed file or command-line argument.
 After upload, remove the base64 copy if it is no longer needed. Keep the
 keystore and recovery data outside the repository or in the ignored cache.
 
+## Manual signed candidate
+
+After source and automated tests are green, run the Android workflow with
+`workflow_dispatch`. The job uses the same four signing secrets, builds the
+ARM64 Release APK, verifies its signature and manifest, and uploads
+`Granite-<package.json version>-candidate-aarch64.apk`, `SHA256SUMS`, the
+inspection report, and manifest dumps as a workflow artifact. This path does
+not create a tag or GitHub Release.
+
 ## Tag release
 
 After the Debug workflow passes:
@@ -81,11 +90,15 @@ The Release job:
 
 1. Requires all four signing secrets.
 2. Builds an ARM64 Release APK with Tauri and NDK 29.
-3. Runs `apksigner verify --verbose --print-certs`.
-4. Dumps badging and merged-manifest checks with `aapt`.
-5. Copies `Granite-<tag>-aarch64.apk` and `SHA256SUMS` to GitHub Release
+3. Runs the Android bridge JVM tests after the Tauri build has generated the
+   ignored Gradle settings inputs.
+4. Runs `apksigner verify --verbose --print-certs`.
+5. Dumps badging and merged-manifest checks with `aapt`.
+6. Copies `Granite-<tag>-aarch64.apk` and `SHA256SUMS` to GitHub Release
    assets.
-6. Never creates an AAB or starts an emulator.
+7. Never creates an AAB or starts an emulator.
 
 The release is only evidenced when the actual run and downloaded assets have
-been inspected.
+been inspected. Physical-device and live WebDAV/S3/cross-device checks are user
+manual follow-ups; they are waived for this delivery, are not pass evidence,
+and do not block creation of the first-version artifacts.

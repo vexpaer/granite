@@ -21,6 +21,23 @@ class NotebookStateRequest {
     lateinit var state: JsonNode
 }
 
+@InvokeArg
+class WriteBookArgs {
+    lateinit var root: JsonNode
+    lateinit var relativePath: String
+    lateinit var bytes: JsonNode
+    var expectedSha256: String? = null
+}
+
+@InvokeArg
+class ProviderRequest {
+    lateinit var profile: JsonNode
+    lateinit var method: String
+    lateinit var key: String
+    var body: JsonNode? = null
+    var headers: JsonNode? = null
+}
+
 class BridgeFailure(message: String) : Exception(message)
 
 data class ScannedBook(

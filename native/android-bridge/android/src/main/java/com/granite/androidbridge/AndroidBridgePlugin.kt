@@ -19,6 +19,7 @@ import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.util.ArrayDeque
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -26,8 +27,10 @@ import java.util.concurrent.Executors
 @TauriPlugin
 class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
     private val ioExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val jsonMapper = ObjectMapper()
     private val defaultStorage = AndroidDefaultStorage(activity.applicationContext)
     private val saf = SafFileSystem(activity.applicationContext)
+    private val safProvider = SafProvider(activity.applicationContext)
     private val notebookMirror = NotebookSafMirror(activity.applicationContext, defaultStorage)
     private val credentials = KeystoreCredentialVault(activity.applicationContext)
     private val shareInbox = ShareInbox(activity.applicationContext)
@@ -138,6 +141,8 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
             "root.migrate",
             "book.import",
             "book.read",
+            "book.stat",
+            "book.readRange",
             "book.write",
             "book.locate",
             "book.trash",
@@ -220,6 +225,25 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
                 }
             } catch (exception: Exception) {
                 rejectSafely(invoke, exception, "Credential is unavailable")
+            }
+        }
+    }
+
+    /** Rust-only local Provider transport backed by one selected SAF tree. */
+    @Command
+    fun providerRequest(invoke: Invoke) {
+        val request = try {
+            invoke.parseArgs(ProviderRequest::class.java)
+        } catch (_: Exception) {
+            invoke.reject("Invalid Android Provider request")
+            return
+        }
+        ioExecutor.execute {
+            try {
+                val result = safProvider.request(request)
+                activity.runOnUiThread { invoke.resolveObject(result) }
+            } catch (exception: Exception) {
+                rejectSafely(invoke, exception, "Android SAF Provider request failed")
             }
         }
     }
@@ -420,11 +444,34 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
                     requiredString(args, "relativePath"),
                 ),
             )
-            "book.write" -> saf.writeBook(
+            "book.stat" -> saf.statBook(
                 requiredRoot(args),
                 requiredString(args, "relativePath"),
-                bytesFromNode(args, "bytes"),
             )
+            "book.readRange" -> bytesToJsArray(
+                saf.readBookRange(
+                    requiredRoot(args),
+                    requiredString(args, "relativePath"),
+                    requiredLong(args, "offset"),
+                    requiredLong(args, "length"),
+                ),
+            )
+            "book.write" -> {
+                val request = try {
+                    jsonMapper.treeToValue(args, WriteBookArgs::class.java)
+                } catch (exception: Exception) {
+                    throw BridgeFailure(
+                        "Invalid book.write request: " +
+                            (exception.message ?: "arguments do not match the contract"),
+                    )
+                }
+                saf.writeBook(
+                    request.root,
+                    request.relativePath,
+                    bytesFromJson(request.bytes, "bytes"),
+                    request.expectedSha256,
+                )
+            }
             "book.locate" -> saf.locateBook(
                 requiredRoot(args),
                 requiredString(args, "relativePath"),

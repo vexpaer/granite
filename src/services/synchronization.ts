@@ -18,7 +18,14 @@ import {
   type DeviceSyncDocument,
   type NoteChange,
 } from "../../packages/core/sync";
-import { hostCall, sha256 } from "./host";
+import { hostCall } from "./host";
+import {
+  isBookObjectComplete,
+  removeBookObjects,
+  transferBook,
+  uploadBookObject,
+} from "./object-transfer";
+export { transferBook };
 const localKey = "granite.local-sync-state";
 interface LocalSyncState {
   authored: SyncChange[];
@@ -31,9 +38,8 @@ interface SyncAccess {
 }
 const encode = (data: unknown) =>
   new TextEncoder().encode(JSON.stringify(data));
-const objectKey = (hash: string) => `objects/sha256/${hash}`;
 export function nativeProvider(data: AppData): StorageProvider {
-  if (!data.settings.provider) throw new Error("请先配置 S3 或 WebDAV 存储。");
+  if (!data.settings.provider) throw new Error("请先配置存储 Provider。");
   return createProvider(
     data.settings.provider,
     createHostProviderTransport((request) =>
@@ -46,16 +52,6 @@ function safeSnapshot(data: AppData) {
   for (const key of Object.keys(pluginData))
     if (key.startsWith("granite.local-")) delete pluginData[key];
   return sanitizeMetadataForSync({ ...data, pluginData });
-}
-export async function transferBook(
-  provider: StorageProvider,
-  book: Book,
-  signal?: AbortSignal,
-) {
-  return provider.read(objectKey(book.sha256), {
-    expectedSha256: book.sha256,
-    signal,
-  });
 }
 export async function synchronize(
   data: AppData,
@@ -247,13 +243,10 @@ export async function synchronize(
   for (let i = 0; i < toTransfer.length; i++) {
     check();
     const book = toTransfer[i]!;
-    const key = objectKey(book.sha256);
     if (book.available) {
-      if (!(await provider.stat(key, options))) {
+      if (!(await isBookObjectComplete(provider, book, signal))) {
         const bytes = await access.read(book);
-        if ((await sha256(bytes)) !== book.sha256)
-          throw new Error(`书籍内容已变化：${book.title}，请重新扫描后同步。`);
-        await provider.write(key, bytes, options);
+        await uploadBookObject(provider, book, bytes, signal);
       }
       book.cloudState = "synced";
     } else {
@@ -269,14 +262,18 @@ export async function synchronize(
     ...options,
     contentType: "application/json",
   });
-  for (const tombstone of merged.tombstones) {
-    check();
-    if (
+  const unreferencedHashes = new Set(
+    merged.tombstones.flatMap((tombstone) =>
       tombstone.entityType === "book" &&
       tombstone.hash &&
-      !output.books.some((b) => b.sha256 === tombstone.hash)
-    )
-      await provider.remove(objectKey(tombstone.hash), options);
+      !output.books.some((book) => book.sha256 === tombstone.hash)
+        ? [tombstone.hash]
+        : [],
+    ),
+  );
+  for (const hash of unreferencedHashes) {
+    check();
+    await removeBookObjects(provider, hash, options);
   }
   const finalSafe = safeSnapshot(output);
   const nextKnown: LocalSyncState["known"] = {};

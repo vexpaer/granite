@@ -17,10 +17,12 @@ use crate::error::{HostError, HostResult};
 use crate::filesystem::atomic_write_path;
 use crate::filesystem::{
     import_book, migrate_roots, read_book, read_file, reveal_file, scan_root, trash_book,
-    write_book, MAX_IPC_FILE_BYTES,
+    write_book_with_expected_sha256, MAX_IPC_FILE_BYTES,
 };
+use crate::local_provider;
 use crate::models::{
     Diagnostics, HostRequest, LibraryRoot, MigrationProgress, PickedBook, ProviderProfile,
+    ProviderType,
 };
 use crate::network;
 #[cfg(not(target_os = "android"))]
@@ -30,12 +32,14 @@ use crate::paths::make_picked_root;
 #[cfg(not(target_os = "android"))]
 use crate::paths::sanitize_component;
 use crate::paths::{format_from_path, make_default_root, validate_library_root};
+use crate::reader_stream;
 
 pub struct HostState {
     database: Arc<Mutex<Database>>,
     app_data_directory: PathBuf,
     default_library_root: PathBuf,
     file_backup_directory: PathBuf,
+    local_provider_lock: Mutex<()>,
     migration_cancel: Arc<AtomicBool>,
     migration_active: Arc<AtomicBool>,
 }
@@ -52,6 +56,7 @@ impl HostState {
             app_data_directory,
             default_library_root,
             file_backup_directory,
+            local_provider_lock: Mutex::new(()),
             migration_cancel: Arc::new(AtomicBool::new(false)),
             migration_active: Arc::new(AtomicBool::new(false)),
         })
@@ -115,6 +120,19 @@ async fn dispatch(app: &AppHandle, state: &HostState, request: HostRequest) -> H
             let relative_path = args.string("relativePath")?;
             serde_json::to_value(read_book(&root, relative_path)?).map_err(Into::into)
         }
+        "book.stat" => {
+            let root = args.root("root")?;
+            let relative_path = args.string("relativePath")?;
+            serde_json::to_value(reader_stream::stat(&root, relative_path)?).map_err(Into::into)
+        }
+        "book.readRange" => {
+            let root = args.root("root")?;
+            let relative_path = args.string("relativePath")?;
+            let offset = args.u64("offset")?;
+            let length = args.u64("length")?;
+            let bytes = reader_stream::read_range(&root, relative_path, offset, length)?;
+            Ok(json!(bytes))
+        }
         "book.write" => book_write(state, &args),
         "book.export" => {
             let filename = args.string("filename")?;
@@ -146,7 +164,7 @@ async fn dispatch(app: &AppHandle, state: &HostState, request: HostRequest) -> H
             credentials::delete_credential(id)?;
             Ok(Value::Bool(true))
         }
-        "provider.request" => provider_request(app, &args).await,
+        "provider.request" => provider_request(app, state, &args).await,
         "backup.export" => {
             let filename = args.string("filename")?;
             let bytes = args.bytes("bytes")?;
@@ -193,12 +211,28 @@ fn android_should_dispatch(op: &str, args: &Value) -> bool {
         return true;
     }
 
+    if op == "provider.request" {
+        return args
+            .get("profile")
+            .and_then(|profile| profile.get("type"))
+            .and_then(Value::as_str)
+            == Some("local")
+            && args
+                .get("profile")
+                .and_then(|profile| profile.get("root"))
+                .and_then(|root| root.get("kind"))
+                .and_then(Value::as_str)
+                == Some("saf");
+    }
+
     if matches!(
         op,
         "root.scan"
             | "root.validate"
             | "book.import"
             | "book.read"
+            | "book.stat"
+            | "book.readRange"
             | "book.write"
             | "book.locate"
             | "book.trash"
@@ -223,7 +257,7 @@ async fn state_load(app: &AppHandle, state: &HostState) -> HostResult<Value> {
         return Ok(Value::Null);
     };
     #[cfg(not(target_os = "android"))]
-    let synchronized = notebook::sync_from_disk(&stored, &state.default_library_root)?;
+    let synchronized = startup_state_with_notebook_sync(&stored, &state.default_library_root);
     #[cfg(target_os = "android")]
     let synchronized = {
         use tauri_plugin_android_bridge::AndroidBridgeExt;
@@ -246,6 +280,17 @@ async fn state_load(app: &AppHandle, state: &HostState) -> HostResult<Value> {
         state.database().save_document(&synchronized)?;
     }
     Ok(synchronized)
+}
+
+#[cfg(not(target_os = "android"))]
+fn startup_state_with_notebook_sync(stored: &Value, default_library_root: &Path) -> Value {
+    match notebook::sync_from_disk(stored, default_library_root) {
+        Ok(synchronized) => synchronized,
+        Err(error) => {
+            eprintln!("Granite skipped Notebook startup reconciliation: {error}");
+            stored.clone()
+        }
+    }
 }
 
 async fn state_save(app: &AppHandle, state: &HostState, args: &Args) -> HostResult<Value> {
@@ -374,11 +419,13 @@ fn book_write(state: &HostState, args: &Args) -> HostResult<Value> {
     let root = args.root("root")?;
     let relative_path = args.string("relativePath")?;
     let bytes = args.bytes("bytes")?;
-    serde_json::to_value(write_book(
+    let expected_sha256 = args.string("expectedSha256")?;
+    serde_json::to_value(write_book_with_expected_sha256(
         &root,
         relative_path,
         &bytes,
         &state.file_backup_directory,
+        Some(expected_sha256),
     )?)
     .map_err(Into::into)
 }
@@ -516,7 +563,7 @@ fn export_filename(filename: &str) -> HostResult<String> {
         .map_err(|_| HostError::InvalidArgs("export filename is invalid".into()))
 }
 
-async fn provider_request(app: &AppHandle, args: &Args) -> HostResult<Value> {
+async fn provider_request(app: &AppHandle, state: &HostState, args: &Args) -> HostResult<Value> {
     let _ = app;
     let profile: ProviderProfile = serde_json::from_value(args.value("profile")?.clone())
         .map_err(|error| HostError::InvalidArgs(format!("invalid provider profile: {error}")))?;
@@ -524,6 +571,17 @@ async fn provider_request(app: &AppHandle, args: &Args) -> HostResult<Value> {
     let key = args.string("key")?.to_owned();
     let body = args.optional_bytes("body")?;
     let headers = args.optional_string_map("headers")?;
+    if profile.provider_type == ProviderType::Local {
+        let response = local_provider::request(
+            &profile,
+            &method,
+            &key,
+            body.as_deref(),
+            &headers,
+            &state.local_provider_lock,
+        )?;
+        return serde_json::to_value(response).map_err(Into::into);
+    }
 
     #[cfg(target_os = "windows")]
     let secret = {
@@ -698,6 +756,14 @@ impl Args {
             })
             .collect()
     }
+
+    fn u64(&self, field: &str) -> HostResult<u64> {
+        self.value(field)?.as_u64().ok_or_else(|| {
+            HostError::InvalidArgs(format!(
+                "'{field}' must be a non-negative integer that fits in 64 bits"
+            ))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -710,6 +776,29 @@ mod tests {
         assert_eq!(args.bytes("bytes").expect("bytes"), vec![0, 1, 255]);
         let invalid = Args::new(json!({"bytes": [256]})).expect("args");
         assert!(invalid.bytes("bytes").is_err());
+    }
+
+    #[test]
+    fn unsigned_integer_arguments_reject_negative_fractional_and_overflowing_values() {
+        let valid = Args::new(json!({"offset": 0, "length": u64::MAX})).expect("args");
+        assert_eq!(valid.u64("offset").expect("offset"), 0);
+        assert_eq!(valid.u64("length").expect("length"), u64::MAX);
+
+        for invalid in [
+            json!({"value": -1}),
+            json!({"value": 1.5}),
+            json!({"value": "1"}),
+            json!({"value": null}),
+            json!({}),
+        ] {
+            let args = Args::new(invalid).expect("args");
+            assert!(args.u64("value").is_err());
+        }
+
+        let overflow: Value =
+            serde_json::from_str(r#"{"value":18446744073709551616}"#).expect("JSON value");
+        let args = Args::new(overflow).expect("args");
+        assert!(args.u64("value").is_err());
     }
 
     #[test]
@@ -733,9 +822,70 @@ mod tests {
             "book.read",
             &json!({"root": {"kind": "saf"}})
         ));
+        assert!(android_should_dispatch(
+            "book.stat",
+            &json!({"root": {"kind": "saf"}})
+        ));
+        assert!(android_should_dispatch(
+            "book.readRange",
+            &json!({"root": {"kind": "saf"}})
+        ));
+        assert!(android_should_dispatch(
+            "provider.request",
+            &json!({
+                "profile": {
+                    "type": "local",
+                    "root": {"kind": "saf"}
+                }
+            })
+        ));
         assert!(!android_should_dispatch(
             "book.read",
             &json!({"root": {"kind": "filesystem"}})
         ));
+        assert!(!android_should_dispatch(
+            "book.stat",
+            &json!({"root": {"kind": "filesystem"}})
+        ));
+        assert!(!android_should_dispatch(
+            "book.readRange",
+            &json!({"root": {"kind": "filesystem"}})
+        ));
+        assert!(!android_should_dispatch(
+            "provider.request",
+            &json!({
+                "profile": {
+                    "type": "local",
+                    "root": {"kind": "filesystem"}
+                }
+            })
+        ));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn startup_notebook_access_failure_preserves_stored_state() {
+        let directory = tempfile::tempdir().expect("temporary root");
+        let unavailable_root = directory.path().join("detached-volume");
+        let stored = json!({
+            "schemaVersion": 1,
+            "roots": [{
+                "id": "root-1",
+                "displayName": "Detached",
+                "path": unavailable_root,
+                "kind": "filesystem",
+                "permission": "granted",
+                "enabled": true,
+                "isDefault": true,
+                "readonly": false,
+                "scanState": "idle"
+            }],
+            "notes": [{"id": "note-1", "title": "Keep", "body": "Stored"}]
+        });
+
+        assert_eq!(
+            startup_state_with_notebook_sync(&stored, directory.path()),
+            stored
+        );
     }
 }

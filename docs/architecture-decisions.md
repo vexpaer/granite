@@ -4,6 +4,8 @@
 - **Authoritative source:** [`granite 规格书/Granite 规格书.md`](../granite%20规格书/Granite%20规格书.md)
 - **Repository:** [https://github.com/vexpaer/granite](https://github.com/vexpaer/granite)
 
+**U2 — User correction, 2026-11-10:** all Windows/Android real-device application checks and live-cloud/cross-device checks are assigned to the user after delivery. They are not current release prerequisites and must remain labeled user-manual/not-verified. Functional implementation, automated tests, native/CI builds, signing and artifact checks still apply. U2 supersedes the older evidence-gate statements below; historical source line numbers and acceptance IDs refer to the original specification snapshot.
+
 **U1 — User correction, 2026-11-09:** physical Android-device installation and runtime verification was waived for this implementation. Android CI Debug/Release APK build and artifact/release verification remain required. Android emulator, simulator, and virtual-device testing remain prohibited.
 
 This document separates product decisions that are explicitly approved from implementation ideas that the specification merely recommends. It is intentionally stricter than a normal design note: a plausible implementation detail is not recorded as approved unless the source says so.
@@ -12,7 +14,7 @@ Status terms used below:
 
 - **Confirmed:** explicitly marked **[确定]**, explicitly listed under “已确认”, or stated as a user-confirmed visual direction.
 - **Binding constraint:** normative “must/不得/不能” behavior that limits implementation even when the source did not label the paragraph **[确定]**. This is an acceptance constraint, not proof that every implementation mechanism is approved.
-- **Proposal:** marked **[建议]** and still awaiting an explicit architecture decision.
+- **Proposal:** marked **[建议]**; an implementation may select it within the user's autonomous development scope.
 - **Pending:** marked **[待定]** or absent from the specification.
 
 ## Confirmed And Binding Architecture
@@ -322,9 +324,9 @@ These are excluded from the Core release gate:
 
 Source: `L5, L593, L728, L994, L1037, L1054, L1092, L1096-1098`.
 
-## Proposed Mechanisms Awaiting Approval
+## Implementation Choices
 
-These mechanisms appear in the specification but are not explicit approvals. They must not be treated as settled without another decision.
+The specification proposes these mechanisms without fixing every implementation detail. The user's autonomous development instruction authorizes routine architecture choices. The implementation uses private SQLite, a versioned Granite SDK around Cordis, per-device sync documents, note conflict copies, PDF.js with standard PDF annotation writing, and isolated iframe/Worker plugins. These choices do not require another approval step; only a change to a confirmed product requirement needs a new user decision.
 
 | ID | Proposal | Why it is not yet a decision | Source |
 |---|---|---|---|

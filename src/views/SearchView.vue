@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   BookOpen,
   Folder,
@@ -15,15 +15,45 @@ import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import { authorsLabel, formatDate, plainText, progressLabel } from '../components/utils';
 import type { Book, Collection, Note, Tag } from '../types';
+import {
+  readSearchViewState,
+  writeSearchViewState,
+  type SearchResultType,
+} from '../services/view-state';
 
 const app = useApp();
 const input = ref<HTMLInputElement>();
-const query = ref(String(app.route.id || app.search || ''));
-const type = ref<'all' | 'books' | 'notes' | 'tags' | 'collections'>('all');
+const restoredState = readSearchViewState();
+const routeQuery = String(app.route.id || '');
+const activeQuery = String(app.search || '');
+const navigationEntry =
+  typeof performance === 'undefined'
+    ? undefined
+    : (performance.getEntriesByType('navigation')[0] as
+        | PerformanceNavigationTiming
+        | undefined);
+const navigationType =
+  navigationEntry?.type || '';
+const query = ref(
+  navigationType === 'reload'
+    ? restoredState.query || activeQuery || routeQuery
+    : activeQuery || routeQuery || restoredState.query,
+);
+const type = ref<SearchResultType>(restoredState.type);
 
 watch(query, (value) => {
   app.search = value;
 });
+
+watch(
+  [query, type],
+  () => persistSearchState(),
+  { flush: 'post' },
+);
+
+function persistSearchState() {
+  writeSearchViewState({ query: query.value, type: type.value });
+}
 
 const needle = computed(() => query.value.trim().toLocaleLowerCase('zh-CN'));
 const books = computed<Book[]>(() => {
@@ -89,9 +119,12 @@ function clear() {
 }
 
 onMounted(() => {
+  app.search = query.value;
   input.value?.focus();
   input.value?.select();
 });
+
+onBeforeUnmount(() => persistSearchState());
 </script>
 
 <template>

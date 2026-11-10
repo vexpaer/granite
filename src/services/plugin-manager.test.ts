@@ -448,20 +448,20 @@ describe('Granite plugin manager', () => {
     expect(elapsed).toBeLessThan(4_000)
   })
 
-  it('loads iframe bootstrap from a blob URL and waits for plugin-ready', async () => {
+  it('starts inside the opaque iframe origin and waits for plugin-ready', async () => {
     const plugin = installedPlugin(['storage.namespace'], ['storage.namespace'], 'iframe')
     const activation = activateInstalled(plugin, {})
     const iframe = await waitForIframe(plugin.id)
     const documentSource = iframe.srcdoc
     const bootstrapUrl = /<script src="([^"]+)"><\/script>/.exec(documentSource)?.[1]
 
-    expect(documentSource).toContain("script-src blob:")
+    expect(documentSource).toContain("script-src data: blob:")
     expect(documentSource).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/i)
-    expect(bootstrapUrl).toMatch(/^blob:/)
-    const bootstrap = blobs.get(bootstrapUrl!)
-    expect(bootstrap).toBeDefined()
+    expect(bootstrapUrl).toMatch(/^data:text\/javascript;charset=utf-8,/)
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts')
+    const bootstrap = decodeURIComponent(bootstrapUrl!.split(',').slice(1).join(','))
     const token = /const activationToken = "([^"]+)"/.exec(
-      await blobText(bootstrap!),
+      bootstrap,
     )?.[1]
     expect(token).toBeTruthy()
 

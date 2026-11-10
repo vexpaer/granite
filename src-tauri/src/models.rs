@@ -117,6 +117,7 @@ pub struct MigrationProgress {
 pub enum ProviderType {
     Webdav,
     S3,
+    Local,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +139,8 @@ pub struct ProviderProfile {
     pub credential_id: String,
     #[serde(default)]
     pub access_key_id: Option<String>,
+    #[serde(default)]
+    pub root: Option<LibraryRoot>,
 }
 
 #[derive(Debug, Clone, Serialize)]

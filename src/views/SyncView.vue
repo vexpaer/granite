@@ -22,6 +22,8 @@ import PageHeader from '../components/PageHeader.vue';
 import ProgressRing from '../components/ProgressRing.vue';
 import { formatDateTime, relativeTime } from '../components/utils';
 import type { ProviderProfile } from '../types';
+import { createProvider, createHostProviderTransport } from '../../packages/core/provider';
+import { parseProviderConfiguration } from '../services/provider-backup';
 
 const app = useApp();
 const providerOpen = ref(false);
@@ -29,6 +31,9 @@ const removeOpen = ref(false);
 const secret = ref('');
 const savingProvider = ref(false);
 const savingPolicy = ref(false);
+const verifyingProvider = ref(false);
+const verification = ref('');
+const providerLabel = (type: ProviderProfile['type']) => ({ local: '本地文件夹', webdav: 'WebDAV', s3: 'S3-compatible' })[type];
 const providerDraft = ref<ProviderProfile>({
   id: crypto.randomUUID(),
   type: 'webdav',
@@ -40,11 +45,12 @@ const providerDraft = ref<ProviderProfile>({
 });
 
 const provider = computed(() => app.settings.provider);
+const providerTemplate = computed(() => app.pluginData['granite.local-provider-template']);
 const isSyncing = computed(() => ['syncing', 'preparing', 'uploading', 'downloading'].some((value) => String(app.syncStatus).toLowerCase().includes(value)));
 const statusTone = computed(() => {
   const status = String(app.syncStatus).toLowerCase();
   if (status.includes('error') || status.includes('fail') || status.includes('offline')) return 'danger';
-  if (status.includes('success') || app.syncHistory[0]?.status === 'success') return 'success';
+  if (status.includes('success')) return 'success';
   if (status === 'unconfigured') return 'muted';
   return 'accent';
 });
@@ -79,23 +85,79 @@ function openProviderEditor(type?: ProviderProfile['type']) {
 
 function setProviderType(type: ProviderProfile['type']) {
   providerDraft.value.type = type;
-  providerDraft.value.name = providerDraft.value.name || (type === 'webdav' ? 'WebDAV' : 'S3-compatible');
+  providerDraft.value.name = providerLabel(type);
+  providerDraft.value.endpoint = '';
+  providerDraft.value.root = undefined;
+  providerDraft.value.prefix = type === 'local' ? '.granite-provider' : 'Granite';
+  verification.value = '';
+}
+
+function reviewRestoredProvider() {
+  try {
+    const restored = parseProviderConfiguration(providerTemplate.value).configuration;
+    providerDraft.value = { ...restored, endpoint: restored.endpoint || '', id: crypto.randomUUID(), credentialId: crypto.randomUUID() };
+    secret.value = '';
+    providerOpen.value = true;
+  } catch (error) { app.error = error instanceof Error ? error.message : String(error); }
+}
+
+async function pickProviderRoot() {
+  try {
+    const root = await hostCall<NonNullable<ProviderProfile['root']> | null>('root.pick');
+    if (root) {
+      providerDraft.value.root = root;
+      providerDraft.value.endpoint = root.path;
+    }
+  } catch (error) { app.error = error instanceof Error ? error.message : String(error); }
+}
+
+async function checkConnection(profile: ProviderProfile) {
+  const target = createProvider(profile, createHostProviderTransport(request => hostCall(request.op, request.args)));
+  const key = `sync/connection-check/${crypto.randomUUID()}.json`;
+  const bytes = new TextEncoder().encode('{"granite":1}');
+  const result = await target.write(key, bytes);
+  try { await target.read(key, { expectedSha256: result.checksum }); }
+  finally { await target.remove(key); }
+}
+
+async function verifyProvider() {
+  if (!provider.value) return;
+  verifyingProvider.value = true;
+  verification.value = '';
+  try { await checkConnection(provider.value); verification.value = '读写与校验通过'; }
+  catch (error) { app.error = error instanceof Error ? error.message : String(error); }
+  finally { verifyingProvider.value = false; }
 }
 
 async function saveProvider() {
   savingProvider.value = true;
+  const previous = app.settings.provider;
+  let createdCredential: string | undefined;
   try {
-    if (secret.value) {
+    const draft: ProviderProfile = JSON.parse(JSON.stringify(providerDraft.value));
+    if (!draft.name.trim()) throw new Error('请输入显示名称。');
+    if (draft.type === 'local') {
+      if (!draft.root) throw new Error('请先选择本地文件夹。');
+      draft.credentialId = '';
+    } else if (secret.value) {
+      draft.credentialId = crypto.randomUUID();
       await hostCall('credential.set', {
-        id: providerDraft.value.credentialId,
+        id: draft.credentialId,
         secret: secret.value,
       });
+      createdCredential = draft.credentialId;
     }
-    app.settings.provider = JSON.parse(JSON.stringify(providerDraft.value));
+    await checkConnection(draft);
+    app.settings.provider = draft;
+    delete app.pluginData['granite.local-provider-template'];
     await app.saveSettings();
+    app.syncStatus = 'idle';
+    verification.value = '读写与校验通过';
     secret.value = '';
     providerOpen.value = false;
   } catch (error) {
+    app.settings.provider = previous;
+    if (createdCredential) await hostCall('credential.delete', { id: createdCredential }).catch(() => {});
     app.error = error instanceof Error ? error.message : String(error);
   } finally {
     savingProvider.value = false;
@@ -103,7 +165,7 @@ async function saveProvider() {
 }
 
 async function removeProvider() {
-  if (provider.value) {
+  if (provider.value?.credentialId) {
     try {
       await hostCall('credential.delete', { id: provider.value.credentialId });
     } catch {
@@ -154,8 +216,8 @@ async function savePolicy() {
       </div>
       <div class="sync-hero__copy">
         <h2>{{ statusLabel }}</h2>
-        <p v-if="provider">{{ provider.name }} · {{ provider.type === 's3' ? 'S3-compatible' : 'WebDAV' }} · {{ provider.endpoint }}</p>
-        <p v-else>配置 WebDAV 或 S3-compatible Provider 后，可在设备之间同步。Granite 不要求官方账户。</p>
+        <p v-if="provider">{{ provider.name }} · {{ providerLabel(provider.type) }} · {{ provider.endpoint }}</p>
+        <p v-else>选择本地文件夹、WebDAV 或 S3-compatible 存储。Granite 不要求官方账户。</p>
       </div>
       <div v-if="isSyncing" class="sync-progress">
         <ProgressRing :value="app.syncProgress * 100" :size="76" :stroke="6" :label="`同步进度 ${Math.round(app.syncProgress * 100)}%`">
@@ -165,12 +227,16 @@ async function savePolicy() {
       <button v-if="!provider" class="button button--primary" type="button" @click="openProviderEditor()"><Plus :size="16" />配置 Provider</button>
     </section>
 
+    <section v-if="providerTemplate" class="surface-card section-card">
+      <div class="section-heading"><h2>备份中的存储配置</h2><button class="button button--secondary" type="button" @click="reviewRestoredProvider">审查并重新授权</button></div>
+      <p>已保留非敏感连接配置。恢复时需要重新输入凭证或选择目录，然后验证读写；当前连接仍由你决定。</p>
+    </section>
     <div class="sync-layout">
       <section class="surface-card section-card">
         <div class="section-heading"><h2>存储 Provider</h2><button v-if="provider" type="button" @click="openProviderEditor()">编辑</button></div>
         <div v-if="provider" class="provider-card">
           <div class="provider-card__top">
-            <span class="provider-type">{{ provider.type === 's3' ? 'S3' : 'WebDAV' }}</span>
+            <span class="provider-type">{{ providerLabel(provider.type) }}</span>
             <strong>{{ provider.name }}</strong>
             <span class="status-dot" :class="statusTone === 'success' ? 'status-dot--success' : statusTone === 'danger' ? 'status-dot--danger' : 'status-dot--warning'"></span>
           </div>
@@ -180,12 +246,14 @@ async function savePolicy() {
             <div v-if="provider.region"><dt>Region</dt><dd>{{ provider.region }}</dd></div>
             <div v-if="provider.bucket"><dt>Bucket</dt><dd>{{ provider.bucket }}</dd></div>
             <div><dt>同步前缀</dt><dd>{{ provider.prefix || 'Granite' }}</dd></div>
-            <div><dt>凭证</dt><dd><ShieldCheck :size="14" />由原生安全存储管理</dd></div>
+            <div><dt>访问</dt><dd><ShieldCheck :size="14" />{{ provider.type === 'local' ? '用户选择的目录授权' : '由原生安全存储管理凭证' }}</dd></div>
           </dl>
           <div class="provider-card__actions">
+            <button class="button button--secondary button--small" type="button" :disabled="verifyingProvider" @click="verifyProvider"><CheckCircle2 :size="14" />{{ verifyingProvider ? '验证中' : '验证读写' }}</button>
             <button class="button button--secondary button--small" type="button" @click="openProviderEditor()"><KeyRound :size="14" />更新凭证</button>
             <button class="button button--ghost button--small danger" type="button" @click="removeOpen = true"><Trash2 :size="14" />移除 Provider</button>
           </div>
+          <p v-if="verification" role="status">{{ verification }}</p>
         </div>
         <div v-else class="provider-empty">
           <Cloud :size="25" />
@@ -194,6 +262,7 @@ async function savePolicy() {
           <div class="inline-actions">
             <button class="button button--primary" type="button" @click="openProviderEditor('webdav')">配置 WebDAV</button>
             <button class="button button--secondary" type="button" @click="openProviderEditor('s3')">配置 S3-compatible</button>
+            <button class="button button--secondary" type="button" @click="openProviderEditor('local')">选择本地文件夹</button>
           </div>
         </div>
       </section>
@@ -299,6 +368,7 @@ async function savePolicy() {
     >
       <form class="provider-form form-grid" @submit.prevent="saveProvider">
         <div class="provider-type-choice form-field--full">
+          <button type="button" :class="{ 'is-active': providerDraft.type === 'local' }" @click="setProviderType('local')">本地文件夹<small>使用授权目录中的独立存储空间</small></button>
           <button type="button" :class="{ 'is-active': providerDraft.type === 'webdav' }" @click="setProviderType('webdav')">WebDAV<small>Nextcloud、坚果云、群晖与通用 WebDAV</small></button>
           <button type="button" :class="{ 'is-active': providerDraft.type === 's3' }" @click="setProviderType('s3')">S3-compatible<small>AWS S3、R2、MinIO、Backblaze B2 等</small></button>
         </div>
@@ -307,8 +377,12 @@ async function savePolicy() {
           <input v-model="providerDraft.name" class="field" required placeholder="例如：个人 WebDAV" />
         </label>
         <label class="form-field">
-          <span>Endpoint</span>
-          <input v-model="providerDraft.endpoint" class="field" type="url" required placeholder="https://" />
+          <span>{{ providerDraft.type === 'local' ? '存储文件夹' : 'Endpoint' }}</span>
+          <template v-if="providerDraft.type === 'local'">
+            <input :value="providerDraft.endpoint" class="field" readonly placeholder="请选择文件夹" />
+            <button class="button button--secondary" type="button" @click="pickProviderRoot"><FolderOpen :size="16" />选择文件夹</button>
+          </template>
+          <input v-else v-model="providerDraft.endpoint" class="field" type="url" required placeholder="https://" />
         </label>
         <template v-if="providerDraft.type === 'webdav'">
           <label class="form-field">
@@ -316,7 +390,7 @@ async function savePolicy() {
             <input v-model="providerDraft.username" class="field" autocomplete="username" />
           </label>
         </template>
-        <template v-else>
+        <template v-else-if="providerDraft.type === 's3'">
           <label class="form-field">
             <span>Region</span>
             <input v-model="providerDraft.region" class="field" />
@@ -334,7 +408,7 @@ async function savePolicy() {
           <span>同步前缀</span>
           <input v-model="providerDraft.prefix" class="field" placeholder="Granite" />
         </label>
-        <label class="form-field">
+        <label v-if="providerDraft.type !== 'local'" class="form-field">
           <span>{{ providerDraft.type === 'webdav' ? '应用专用密码' : 'Secret Access Key' }}</span>
           <input v-model="secret" class="field" type="password" autocomplete="new-password" :required="!provider" :placeholder="provider ? '留空则保留现有凭证' : '仅在保存时传入原生安全存储'" />
         </label>

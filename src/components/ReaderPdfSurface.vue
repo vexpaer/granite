@@ -150,7 +150,7 @@ let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 let layoutGeneration = 0;
 let springFrame = 0;
 let momentumFrame = 0;
-let viewEmitFrame = 0;
+let viewEmitTimer: ReturnType<typeof setTimeout> | undefined;
 let lastViewEmit = 0;
 let wheelSpringTimer: ReturnType<typeof setTimeout> | undefined;
 let initialized = false;
@@ -196,14 +196,12 @@ function setLegalTransform(next: DocumentTransform): void {
 }
 
 function scheduleViewEmit(): void {
-  const now = performance.now();
-  if (viewEmitFrame) return;
-  viewEmitFrame = requestAnimationFrame(() => {
-    viewEmitFrame = 0;
-    if (now - lastViewEmit < 60) return;
-    lastViewEmit = now;
+  if (viewEmitTimer) return;
+  viewEmitTimer = setTimeout(() => {
+    viewEmitTimer = undefined;
+    lastViewEmit = performance.now();
     emitView();
-  });
+  }, Math.max(0, 60 - (performance.now() - lastViewEmit)));
 }
 
 function pageProgress(page: number, pageCenterFraction = 0.5): number {
@@ -1063,7 +1061,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   layoutGeneration += 1;
   stopAnimations();
-  if (viewEmitFrame) cancelAnimationFrame(viewEmitFrame);
+  if (viewEmitTimer) clearTimeout(viewEmitTimer);
   if (resizeTimer) clearTimeout(resizeTimer);
   if (wheelSpringTimer) clearTimeout(wheelSpringTimer);
   if (longPressTimer) clearTimeout(longPressTimer);

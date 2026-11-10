@@ -18,6 +18,7 @@ import {
   KeyRound,
   PackagePlus,
   PlugZap,
+  RefreshCw,
   ShieldOff,
   ShieldAlert,
   ShieldCheck,
@@ -30,6 +31,16 @@ import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import type { InstalledPlugin } from '../types';
 import type { PluginUiEntry } from '../services/plugin-manager';
+import {
+  OFFICIAL_PLUGIN_REGISTRY_URL,
+  comparePluginRegistryVersion,
+  fetchBundledPluginRegistry,
+  fetchPluginRegistry,
+  findPluginRegistryUpdates,
+  isPluginRegistryAbortError,
+  verifyRegistryPackage,
+  type PluginRegistryEntry,
+} from '../services/plugin-registry';
 
 const app = useApp();
 const fileInput = ref<HTMLInputElement>();
@@ -43,6 +54,16 @@ const installError = ref('');
 const remoteSourceUrl = ref('');
 const stagingRemoteSource = ref(false);
 const remoteSourceError = ref('');
+const registryEntries = ref<PluginRegistryEntry[]>([]);
+const registrySourceLabel = ref('内置目录');
+const registrySourceUrl = ref('/plugin-registry.json');
+const registryLoaded = ref(false);
+const registryLoading = ref(false);
+const registryError = ref('');
+const registryStatus = ref('');
+const registryActionError = ref('');
+const thirdPartyRegistryUrl = ref('');
+const stagingRegistryId = ref('');
 const enableTarget = ref<InstalledPlugin | null>(null);
 const enableAccepted = ref(false);
 const expandedPlugin = ref('');
@@ -52,6 +73,8 @@ const revokeTarget = ref<{ plugin: InstalledPlugin; permission: string } | null>
 const changingSafeMode = ref(false);
 const uiEntries = shallowRef<PluginUiEntry[]>([]);
 let stopUiEntryWatch: (() => void) | undefined;
+let registryAbortController: AbortController | undefined;
+let registryRequestSequence = 0;
 
 const permissionDescriptions: Record<string, string> = {
   'reader.observe': '观察阅读位置、活动状态和选中文字。',
@@ -77,11 +100,23 @@ const candidatePermissions = computed(() => {
   return Array.isArray(value) ? value.map(String) : [];
 });
 const candidateDependencies = computed(() => {
-  const value = candidateManifest.value?.dependencies;
-  return value && typeof value === 'object' ? Object.entries(value) : [];
+  const dependencies = candidateManifest.value?.dependencies;
+  const optional = candidateManifest.value?.optionalDependencies;
+  return [
+    ...(dependencies && typeof dependencies === 'object'
+      ? Object.entries(dependencies).map(([name, version]) => [name, version, false] as const)
+      : []),
+    ...(optional && typeof optional === 'object'
+      ? Object.entries(optional).map(([name, version]) => [name, version, true] as const)
+      : []),
+  ];
 });
+const candidateSource = computed(() => manifestSource(candidateManifest.value));
 const enablePermissions = computed(() => enableTarget.value?.permissions || []);
 const safeMode = computed(() => app.settings.layout.safeMode === true);
+const registryUpdates = computed(() =>
+  findPluginRegistryUpdates(registryEntries.value, app.plugins),
+);
 const pluginPages = computed(() =>
   uiEntries.value
     .filter(
@@ -94,6 +129,146 @@ const pluginPages = computed(() =>
 
 function describePermission(permission: string) {
   return permissionDescriptions[permission] || `插件声明的能力：${permission}`;
+}
+
+function manifestSource(manifest?: Record<string, unknown> | null) {
+  const source = manifest?.source;
+  if (source && typeof source === 'object' && 'uri' in source) {
+    const uri = String((source as { uri?: unknown }).uri || '');
+    if (uri) return uri;
+  }
+  return '未声明';
+}
+
+function installedDependencies(manifest?: Record<string, unknown>) {
+  const dependencies = manifest?.dependencies;
+  const optional = manifest?.optionalDependencies;
+  return [
+    ...(dependencies && typeof dependencies === 'object'
+      ? Object.entries(dependencies).map(([name, version]) => `${name} ${String(version)}`)
+      : []),
+    ...(optional && typeof optional === 'object'
+      ? Object.entries(optional).map(([name, version]) => `${name} ${String(version)}（可选）`)
+      : []),
+  ];
+}
+
+function registryPackageHost(packageUrl: string) {
+  try {
+    return new URL(packageUrl).hostname;
+  } catch {
+    return packageUrl;
+  }
+}
+
+function installedForRegistryEntry(entry: PluginRegistryEntry) {
+  return app.plugins.find((plugin) => plugin.id === entry.id);
+}
+
+function registryEntryAction(entry: PluginRegistryEntry) {
+  const installed = installedForRegistryEntry(entry);
+  if (!installed) return 'install' as const;
+  const comparison = comparePluginRegistryVersion(
+    entry.version,
+    installed.version,
+  );
+  if (comparison === undefined) return 'uncomparable' as const;
+  if (comparison > 0) return 'update' as const;
+  if (comparison === 0) return 'current' as const;
+  return 'newer' as const;
+}
+
+function registryEntryState(entry: PluginRegistryEntry) {
+  const action = registryEntryAction(entry);
+  if (action === 'current') return '已是最新';
+  if (action === 'newer') return '本机版本高于目录';
+  if (action === 'uncomparable') return '本机版本不是语义化版本';
+  return '';
+}
+
+function registryActionLabel(entry: PluginRegistryEntry) {
+  if (stagingRegistryId.value === entry.id) return '正在获取并校验';
+  return registryEntryAction(entry) === 'update' ? '审查更新' : '审查并安装';
+}
+
+function applyRegistry(
+  requestId: number,
+  loaded: Awaited<ReturnType<typeof fetchBundledPluginRegistry>>,
+  sourceLabel: string,
+) {
+  if (requestId !== registryRequestSequence) return;
+  registryEntries.value = loaded.catalog.plugins;
+  registrySourceLabel.value = sourceLabel;
+  registrySourceUrl.value = loaded.sourceUrl;
+  registryLoaded.value = true;
+  registryError.value = '';
+  registryStatus.value = `目录已读取：${loaded.catalog.plugins.length} 个条目，${Math.ceil(loaded.byteLength / 1024)} KB。`;
+  registryActionError.value = '';
+}
+
+async function loadBundledRegistry() {
+  registryAbortController?.abort();
+  const controller = new AbortController();
+  registryAbortController = controller;
+  const requestId = ++registryRequestSequence;
+  registryLoading.value = true;
+  registryError.value = '';
+  registryStatus.value = '';
+  try {
+    const loaded = await fetchBundledPluginRegistry(
+      '/plugin-registry.json',
+      fetch,
+      controller.signal,
+    );
+    applyRegistry(requestId, loaded, '内置目录');
+  } catch (error) {
+    if (requestId !== registryRequestSequence || isPluginRegistryAbortError(error)) return;
+    registryError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (requestId === registryRequestSequence) registryLoading.value = false;
+  }
+}
+
+async function loadRemoteRegistry(url: string, sourceLabel: string) {
+  const normalizedUrl = url.trim();
+  if (!normalizedUrl) return;
+  registryAbortController?.abort();
+  const controller = new AbortController();
+  registryAbortController = controller;
+  const requestId = ++registryRequestSequence;
+  registryLoading.value = true;
+  registryError.value = '';
+  registryStatus.value = '';
+  registryActionError.value = '';
+  try {
+    const loaded = await fetchPluginRegistry(normalizedUrl, {
+      signal: controller.signal,
+    });
+    applyRegistry(requestId, loaded, sourceLabel);
+  } catch (error) {
+    if (requestId !== registryRequestSequence || isPluginRegistryAbortError(error)) return;
+    registryError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (requestId === registryRequestSequence) registryLoading.value = false;
+  }
+}
+
+function checkOfficialRegistry() {
+  void loadRemoteRegistry(OFFICIAL_PLUGIN_REGISTRY_URL, 'Granite 官方目录');
+}
+
+function loadThirdPartyRegistry() {
+  const url = thirdPartyRegistryUrl.value.trim();
+  if (!url) return;
+  void loadRemoteRegistry(url, '第三方目录');
+}
+
+function cancelRegistryRequest() {
+  registryRequestSequence += 1;
+  registryAbortController?.abort();
+  registryAbortController = undefined;
+  registryLoading.value = false;
+  registryStatus.value = '目录请求已取消；已忽略可能晚到的返回结果。';
 }
 
 function manifestValue(key: string) {
@@ -143,9 +318,9 @@ async function inspectFile(event: Event) {
   }
 }
 
-async function stageRemoteSource() {
-  const url = remoteSourceUrl.value.trim();
-  if (!url) return;
+async function stageRemoteSource(explicitUrl?: string, registryEntry?: PluginRegistryEntry): Promise<boolean> {
+  const url = (explicitUrl || remoteSourceUrl.value).trim();
+  if (!url) return false;
   remoteSourceError.value = '';
   installError.value = '';
   stagingRemoteSource.value = true;
@@ -153,16 +328,37 @@ async function stageRemoteSource() {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') throw new Error('插件来源必须使用 HTTPS。');
     const staged = await app.stagePluginSource(parsed.toString());
+    if (registryEntry) {
+      const { previewPluginPackage } = await import('../services/plugin-manager');
+      const preview = await previewPluginPackage(new Uint8Array(await staged.file.arrayBuffer()));
+      if (!preview.bundle) throw new Error('插件包缺少预构建 Bundle。');
+      await verifyRegistryPackage(registryEntry, staged.manifest, preview.bundle);
+    }
     candidateFile.value = staged.file;
     candidateManifest.value = staged.manifest;
     candidateOrigin.value = 'remote';
     permissionAccepted.value = false;
     reviewOpen.value = true;
+    return true;
   } catch (error) {
     remoteSourceError.value = error instanceof Error ? error.message : String(error);
     app.error = remoteSourceError.value;
+    return false;
   } finally {
     stagingRemoteSource.value = false;
+  }
+}
+
+async function stageRegistryEntry(entry: PluginRegistryEntry) {
+  if (stagingRemoteSource.value) return;
+  registryActionError.value = '';
+  stagingRegistryId.value = entry.id;
+  remoteSourceUrl.value = entry.packageUrl;
+  try {
+    const staged = await stageRemoteSource(entry.packageUrl, entry);
+    if (!staged) registryActionError.value = remoteSourceError.value;
+  } finally {
+    stagingRegistryId.value = '';
   }
 }
 
@@ -246,6 +442,7 @@ function toggleExpanded(id: string) {
 }
 
 onMounted(async () => {
+  void loadBundledRegistry();
   try {
     const manager = await import('../services/plugin-manager');
     const syncEntries = () => {
@@ -263,6 +460,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  registryRequestSequence += 1;
+  registryAbortController?.abort();
   stopUiEntryWatch?.();
 });
 </script>
@@ -291,7 +490,124 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <form class="remote-install-card surface-card" @submit.prevent="stageRemoteSource">
+    <section class="registry-card surface-card section-card">
+      <div class="section-heading">
+        <h2>发现插件</h2>
+        <span class="muted">{{ registryEntries.length }} 个目录条目</span>
+      </div>
+      <div class="registry-source-bar">
+        <div>
+          <strong>{{ registrySourceLabel }}</strong>
+          <a v-if="registrySourceUrl.startsWith('https://')" :href="registrySourceUrl" target="_blank" rel="noreferrer noopener">{{ registrySourceUrl }}</a>
+          <code v-else>{{ registrySourceUrl }}</code>
+        </div>
+        <div class="registry-source-actions">
+          <button class="button button--secondary button--small" type="button" :disabled="registryLoading" @click="checkOfficialRegistry">
+            <RefreshCw :size="14" :class="{ 'registry-spinner': registryLoading }" />检查官方目录
+          </button>
+          <button v-if="registryLoading" class="button button--ghost button--small" type="button" @click="cancelRegistryRequest">取消请求</button>
+        </div>
+      </div>
+      <form class="registry-third-party" @submit.prevent="loadThirdPartyRegistry">
+        <label class="form-field">
+          <span>第三方目录 URL</span>
+          <input
+            v-model="thirdPartyRegistryUrl"
+            class="field"
+            type="url"
+            inputmode="url"
+            autocomplete="off"
+            placeholder="https://registry.example.com/granite.json"
+          />
+        </label>
+        <button class="button button--secondary" type="submit" :disabled="registryLoading || !thirdPartyRegistryUrl.trim()">
+          {{ registryLoading ? '正在读取' : '读取第三方目录' }}
+        </button>
+      </form>
+      <div v-if="registryLoading" class="registry-notice registry-notice--loading" role="status">
+        <RefreshCw :size="15" class="registry-spinner" />正在通过受大小限制的 HTTPS 通道读取目录……
+      </div>
+      <p v-else-if="registryError" class="registry-notice registry-notice--error" role="alert">
+        <AlertTriangle :size="15" />{{ registryError }}
+      </p>
+      <p v-else-if="registryStatus" class="registry-notice" role="status">{{ registryStatus }}</p>
+      <p class="registry-trust-note">
+        目录里的作者、许可证与完整性只是索引声明。安装或更新时仍以插件包清单、实际包地址和权限审查为准；目录不会自动启用插件或授予权限。
+      </p>
+      <div v-if="registryEntries.length" class="registry-list">
+        <article v-for="entry in registryEntries" :key="entry.id" class="registry-entry">
+          <div class="plugin-card__icon"><Boxes :size="19" /></div>
+          <div class="registry-entry__main">
+            <div class="plugin-card__title">
+              <h3>{{ entry.name }}</h3>
+              <span>v{{ entry.version }}</span>
+              <span v-if="registryEntryAction(entry) === 'update'" class="plugin-state plugin-state--enabled">可更新</span>
+              <span v-else-if="installedForRegistryEntry(entry)" class="plugin-state">已安装</span>
+            </div>
+            <p>{{ entry.description }}</p>
+            <div class="registry-entry__meta">
+              <span>{{ entry.id }}</span>
+              <span>{{ entry.author }}</span>
+              <span>{{ entry.license }}</span>
+              <a :href="entry.packageUrl" target="_blank" rel="noreferrer noopener"><ExternalLink :size="13" />{{ registryPackageHost(entry.packageUrl) }}</a>
+            </div>
+            <div class="registry-entry__integrity">
+              <span>完整性声明</span>
+              <code>{{ entry.integrity || '未声明' }}</code>
+            </div>
+          </div>
+          <button
+            v-if="['install', 'update'].includes(registryEntryAction(entry))"
+            class="button button--primary button--small"
+            type="button"
+            :disabled="stagingRemoteSource || Boolean(stagingRegistryId)"
+            @click="stageRegistryEntry(entry)"
+          >
+            {{ registryActionLabel(entry) }}
+          </button>
+          <span v-else class="registry-entry-state">{{ registryEntryState(entry) }}</span>
+        </article>
+      </div>
+      <div v-else-if="registryLoaded" class="registry-empty">
+        <strong>暂无已发布插件</strong>
+        <span>当前目录为空。你可以明确检查 Granite 官方目录，或读取一个可信的第三方目录 URL。</span>
+      </div>
+      <p v-if="registryActionError" class="registry-notice registry-notice--error" role="alert">
+        <AlertTriangle :size="15" />{{ registryActionError }}
+      </p>
+    </section>
+
+    <section class="surface-card section-card registry-updates-card">
+      <div class="section-heading">
+        <h2>可更新</h2>
+        <span class="muted">{{ registryUpdates.length }} 个可用更新</span>
+      </div>
+      <div v-if="registryUpdates.length" class="registry-update-list">
+        <article v-for="update in registryUpdates" :key="update.entry.id">
+          <div>
+            <strong>{{ update.entry.name }}</strong>
+            <span>v{{ update.installed.version }} → v{{ update.entry.version }}</span>
+          </div>
+          <div class="registry-update-integrity">
+            <span>完整性声明</span>
+            <code>{{ update.entry.integrity || '未声明' }}</code>
+          </div>
+          <button
+            class="button button--secondary button--small"
+            type="button"
+            :disabled="stagingRemoteSource || Boolean(stagingRegistryId)"
+            @click="stageRegistryEntry(update.entry)"
+          >
+            {{ registryActionLabel(update.entry) }}
+          </button>
+        </article>
+      </div>
+      <p v-else class="registry-updates-empty">
+        {{ registryLoaded ? '当前目录没有比已安装版本更高的可比较条目。' : '读取目录后，Granite 会按语义化版本比较已安装插件。' }}
+      </p>
+    </section>
+
+    <form class="remote-install-card surface-card" @submit.prevent="stageRemoteSource()">
       <ExternalLink :size="25" />
       <div class="remote-install-card__main">
         <h2>从 HTTPS 地址安装</h2>
@@ -377,7 +693,9 @@ onBeforeUnmount(() => {
                 <div><dt>作者</dt><dd>{{ String(plugin.manifest?.author || '未声明') }}</dd></div>
                 <div><dt>许可证</dt><dd>{{ String(plugin.manifest?.license || '未声明') }}</dd></div>
                 <div><dt>API</dt><dd>{{ String(plugin.manifest?.apiVersion || '未声明') }}</dd></div>
-                <div><dt>存储位置</dt><dd>应用插件数据命名空间</dd></div>
+                <div><dt>完整性</dt><dd><code>{{ String(plugin.manifest?.integrity || '未声明') }}</code></dd></div>
+                <div><dt>依赖</dt><dd>{{ installedDependencies(plugin.manifest).join(' · ') || '未声明' }}</dd></div>
+                <div><dt>来源</dt><dd :title="manifestSource(plugin.manifest)">{{ manifestSource(plugin.manifest) }}</dd></div>
               </dl>
               <ul>
                 <li v-for="permission in plugin.permissions" :key="permission">
@@ -464,7 +782,7 @@ onBeforeUnmount(() => {
           <div><strong>{{ String(candidateManifest.name || '未命名插件') }}</strong><span>v{{ String(candidateManifest.version || '?') }} · {{ candidateFile?.name }}</span></div>
         </div>
         <dl>
-          <div><dt>来源</dt><dd>{{ candidateOrigin === 'remote' ? manifestValue('source') : candidateFile?.name }}</dd></div>
+          <div><dt>来源</dt><dd>{{ candidateOrigin === 'remote' ? candidateSource : candidateFile?.name }}</dd></div>
           <div><dt>文件大小</dt><dd>{{ candidateFile ? `${Math.ceil(candidateFile.size / 1024)} KB` : '—' }}</dd></div>
           <div><dt>作者</dt><dd>{{ manifestValue('author') }}</dd></div>
           <div><dt>许可证</dt><dd>{{ manifestValue('license') }}</dd></div>
@@ -477,7 +795,7 @@ onBeforeUnmount(() => {
           <h3>依赖</h3>
           <p v-if="!candidateDependencies.length">此插件没有声明额外依赖。</p>
           <div v-else class="dependency-list">
-            <span v-for="[name, version] in candidateDependencies" :key="name">{{ name }} <code>{{ String(version) }}</code></span>
+            <span v-for="[name, version, optional] in candidateDependencies" :key="name">{{ name }} <code>{{ String(version) }}</code>{{ optional ? '（可选）' : '' }}</span>
           </div>
         </section>
         <section>
@@ -615,6 +933,237 @@ onBeforeUnmount(() => {
 .plugin-summary strong {
   color: var(--text);
   font-size: 0.82rem;
+}
+
+.registry-card {
+  min-width: 0;
+}
+
+.registry-source-bar,
+.registry-third-party,
+.registry-notice,
+.registry-trust-note {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-muted);
+}
+
+.registry-source-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.registry-source-bar > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.registry-source-bar strong {
+  font-size: 0.76rem;
+}
+
+.registry-source-bar a,
+.registry-source-bar code {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registry-source-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.registry-third-party {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.registry-third-party .form-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.registry-third-party .form-field > span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.registry-notice,
+.registry-trust-note {
+  margin: 0.6rem 0 0;
+  padding: 0.55rem 0.7rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.registry-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.registry-notice--loading {
+  color: var(--accent-strong);
+  background: var(--accent-wash);
+}
+
+.registry-notice--error {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.registry-trust-note {
+  border-style: dashed;
+}
+
+.registry-spinner {
+  flex: 0 0 auto;
+  animation: registry-spin 0.9s linear infinite;
+}
+
+@keyframes registry-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.registry-list,
+.registry-update-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.registry-entry {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-elevated);
+}
+
+.registry-entry__main {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.registry-entry__main > p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.registry-entry__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+
+.registry-entry__meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.registry-entry__integrity,
+.registry-update-integrity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.4rem;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+
+.registry-entry__integrity code,
+.registry-update-integrity code {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}
+
+.registry-entry-state {
+  align-self: center;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.registry-empty {
+  display: grid;
+  gap: 0.2rem;
+  padding: 1.1rem;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  margin-top: 0.7rem;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+
+.registry-empty strong {
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.registry-empty span,
+.registry-updates-empty {
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.registry-updates-card {
+  min-height: 0;
+}
+
+.registry-update-list article {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+}
+
+.registry-update-list article > div:first-child {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.registry-update-list strong {
+  font-size: 0.78rem;
+}
+
+.registry-update-list article > div:first-child span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.registry-updates-empty {
+  margin: 0;
+  color: var(--text-secondary);
 }
 
 .remote-install-card,
@@ -1267,6 +1816,38 @@ code {
 @media (max-width: 760px) {
   .plugin-summary {
     grid-template-columns: 1fr;
+  }
+
+  .registry-source-bar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .registry-source-actions,
+  .registry-source-actions .button {
+    width: 100%;
+  }
+
+  .registry-third-party {
+    grid-template-columns: 1fr;
+  }
+
+  .registry-entry {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .registry-entry > .button,
+  .registry-entry-state {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .registry-update-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .registry-update-list article > .button {
+    justify-self: start;
   }
 
   .local-install-card {

@@ -72,6 +72,26 @@ and Notebook files cannot reappear as managed books.
 `file.pickBooks` uses `ACTION_OPEN_DOCUMENT` with multiple selection and
 returns `{name, bytes: number[]}[]`.
 
+Imported books are copied into the managed layout
+`books/<canonical UUID>/<supported filename>` and `book.import` returns that
+complete `relativePath`. The user's external source file is never moved or
+deleted. `book.trash` accepts only this managed layout before creating a
+verified recoverable copy under `.granite/trash/`.
+
+`book.stat {root,relativePath}` returns `{size, sha256?}`. The Android SAF
+implementation returns the provider size and omits the optional digest.
+`book.readRange {root,relativePath,offset,length}` requires a positive range
+inside the file with `length <= 4 MiB` and returns exactly `length` bytes as
+`number[]`. Seekable descriptors are positioned directly; non-seekable
+streams are skipped without materializing the complete file.
+
+`book.write` accepts optional `expectedSha256`. Before creating a safety
+backup, Android streams the current file through SHA-256 and rejects a
+mismatch without modifying it. The source is checked while copying the backup
+and again immediately before replacement. A completed replacement is
+verified against the new hash; failures attempt a verified rollback using the
+same-directory backup.
+
 ## Notebook
 
 The authoritative AppData state and SQLite database remain in Rust/private

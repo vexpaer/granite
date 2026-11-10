@@ -27,6 +27,7 @@ vi.mock('../src/services/host', () => ({
 }));
 
 import { synchronize } from '../src/services/synchronization';
+import { bookPartsPrefix } from '../src/services/object-transfer';
 
 type SyncAccess = Parameters<typeof synchronize>[1];
 
@@ -514,6 +515,10 @@ describe('app synchronization orchestration', () => {
       'book-shared-live',
       'book-solo',
     ]);
+    const soloPartKey = `${bookPartsPrefix(soloBook.sha256)}0-${'e'.repeat(64)}`;
+    const sharedPartKey = `${bookPartsPrefix(sharedLive.sha256)}0-${'f'.repeat(64)}`;
+    server.objects.set(server.storageKey(soloPartKey), new Uint8Array([1]));
+    server.objects.set(server.storageKey(sharedPartKey), new Uint8Array([2]));
 
     const deletionState = structuredClone(syncedA);
     deletionState.revision += 1;
@@ -541,6 +546,8 @@ describe('app synchronization orchestration', () => {
     const afterDeleteA = await synchronize(deletionState, accessA, signal());
     expect(server.object(`objects/sha256/${soloBook.sha256}`)).toBeUndefined();
     expect(server.object(`objects/sha256/${sharedLive.sha256}`)).toBeDefined();
+    expect(server.object(soloPartKey)).toBeUndefined();
+    expect(server.object(sharedPartKey)).toBeDefined();
 
     const afterDeleteB = await synchronize(staleDeviceB, accessB, signal());
     expect(afterDeleteB.books.map((item) => item.id)).toEqual([sharedLive.id]);

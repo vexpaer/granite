@@ -13,11 +13,19 @@ import type {
   ImportResult,
   ReadingSession,
 } from "../types";
-import { hostCall, nativeHost, sha256 } from "../services/host";
+import { hostCall, nativeHost, readNativeBook, sha256 } from "../services/host";
 import { extractMetadata } from "../services/metadata";
 import { appEvents } from "../services/events";
 import { initializePlatform, updatePlatform } from "../services/platform";
+import {
+  addNotebookAttachmentsToZip,
+  notebookBackupDirectory,
+  notebookBackupMarkdownPath,
+  notebookExportBaseName,
+  notebookExportMarkdownFileName,
+} from "../services/notebook-files";
 import { validateShortcuts } from "../services/shortcuts";
+import { exportProviderConfiguration, parseProviderConfiguration } from "../services/provider-backup";
 
 export const defaultSettings = (): AppSettings => ({
   username: "读者",
@@ -56,6 +64,104 @@ export const defaultSettings = (): AppSettings => ({
 const now = () => new Date().toISOString();
 const uid = () => crypto.randomUUID();
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
+const CLEANUP_NAMESPACE = "granite.local-cleanup";
+const MANAGED_BOOK_PATH =
+  /^books\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^/\\]+\.(?:epub|pdf|txt|mobi)$/i;
+type CleanupQueueItem = {
+  bookId: string;
+  root: LibraryRoot;
+  relativePath: string;
+  sha256?: string;
+};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isSafeBookId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 200 &&
+    value !== "." &&
+    value !== ".." &&
+    !/[/\\\0]/.test(value)
+  );
+}
+function restorablePluginData(value: unknown): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  if (!isRecord(value)) return data;
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      key.startsWith("granite.local-") ||
+      ["__proto__", "prototype", "constructor"].includes(key)
+    )
+      continue;
+    data[key] = clone(entry);
+  }
+  return data;
+}
+function mergeKnownSettings<T extends object>(defaults: T, source: unknown): T {
+  const merged = clone(defaults) as Record<string, unknown>;
+  if (isRecord(source))
+    for (const key of Object.keys(defaults))
+      if (source[key] !== undefined) merged[key] = clone(source[key]);
+  return merged as T;
+}
+function restorableSettings(
+  incoming: unknown,
+  provider: AppSettings["provider"],
+): AppSettings {
+  const source = isRecord(incoming) ? incoming : {};
+  const defaults = defaultSettings();
+  const settings = mergeKnownSettings(defaults, source);
+  settings.reader = mergeKnownSettings(defaults.reader, source.reader);
+  if (typeof source.background === "string")
+    settings.background = source.background;
+  settings.provider = provider ? clone(provider) : undefined;
+  return settings;
+}
+function cleanupQueue(value: unknown): CleanupQueueItem[] {
+  if (!Array.isArray(value)) return [];
+  const queue: CleanupQueueItem[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || !isRecord(item.root)) continue;
+    const { bookId, relativePath } = item;
+    const root = item.root;
+    if (
+      !isSafeBookId(bookId) ||
+      typeof relativePath !== "string" ||
+      !MANAGED_BOOK_PATH.test(relativePath) ||
+      typeof root.id !== "string" ||
+      typeof root.path !== "string" ||
+      !["filesystem", "saf", "browser"].includes(String(root.kind))
+    )
+      continue;
+    queue.push({
+      bookId,
+      root: clone(root) as unknown as LibraryRoot,
+      relativePath,
+      ...(typeof item.sha256 === "string" ? { sha256: item.sha256 } : {}),
+    });
+  }
+  return queue;
+}
+function restorableDeviceRecords<T extends { id: string; deviceId: string }>(
+  value: unknown,
+  deviceId: string,
+): T[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) =>
+    isRecord(item) && typeof item.id === "string"
+      ? [{ ...(clone(item) as T), deviceId }]
+      : [],
+  );
+}
+function sameRootIdentity(left: LibraryRoot, right: LibraryRoot): boolean {
+  return (
+    left.id === right.id &&
+    left.path === right.path &&
+    left.kind === right.kind
+  );
+}
 function emptyData(): AppData {
   return {
     schemaVersion: 1,
@@ -174,16 +280,24 @@ class GraniteApp implements AppData {
             scanState: "idle",
           });
       }
+      await this.flushCleanup();
       this.syncStatus = this.settings.provider ? "idle" : "unconfigured";
       try {
         const nav = JSON.parse(
           sessionStorage.getItem("granite-navigation") || "null",
         );
-        if (nav?.route && nav.route.name !== "reader") {
+        if (nav?.route && typeof nav.route.name === "string") {
           this.route = nav.route;
           this.history = nav.history || [];
           this.search = nav.search || "";
           this.shelfFilter = nav.shelfFilter || "all";
+          if (this.route.name === "reader") {
+            const book = this.books.find((b) => b.id === this.route.id);
+            if (book) {
+              this.readerBookId = book.id;
+              this.beginSession(book.id);
+            } else this.route = { name: "home" };
+          }
         }
       } catch {
         /* invalid transient navigation */
@@ -281,6 +395,9 @@ class GraniteApp implements AppData {
     this.rememberNavigation();
   }
   routeChanged(previous: string) {
+    if (this.route.name === "bookshelf" && this.route.id &&
+      ["all", "reading", "unread", "finished", "favorite"].includes(this.route.id))
+      this.shelfFilter = this.route.id;
     if (previous === "reader" && this.route.name !== "reader") {
       this.endSession();
       appEvents.emit("reader.book-closed", { bookId: this.readerBookId });
@@ -365,24 +482,31 @@ class GraniteApp implements AppData {
       this.fail(e);
     }
   }
-  async importInputs(inputs: { name: string; bytes: Uint8Array }[]) {
+  async importInputs(
+    inputs: { name: string; bytes: Uint8Array }[],
+  ): Promise<ImportResult[]> {
     const root = this.defaultRoot;
     if (!root) throw new Error("请先在设置中添加本地书库文件夹。");
     if (root.readonly || root.permission !== "granted")
       throw new Error("目标书库不可写，请重新授权或更改默认书库。");
+    const results: ImportResult[] = [];
+    const record = (result: ImportResult) => {
+      this.importResults.push(result);
+      results.push(result);
+    };
     this.busy = true;
     try {
       for (let i = 0; i < inputs.length; i++) {
         const f = inputs[i]!;
         if (this.cancelImport) {
-          this.importResults.push({ filename: f.name, status: "cancelled" });
+          record({ filename: f.name, status: "cancelled" });
           continue;
         }
         try {
           const hash = await sha256(f.bytes);
           const duplicate = this.books.find((b) => b.sha256 === hash);
           if (duplicate) {
-            this.importResults.push({
+            record({
               filename: f.name,
               status: "duplicate",
               bookId: duplicate.id,
@@ -422,13 +546,13 @@ class GraniteApp implements AppData {
           };
           this.books.push(book);
           await this.persist();
-          this.importResults.push({
+          record({
             filename: f.name,
             status: "success",
             bookId: book.id,
           });
         } catch (e) {
-          this.importResults.push({
+          record({
             filename: f.name,
             status: "error",
             message: e instanceof Error ? e.message : String(e),
@@ -443,6 +567,7 @@ class GraniteApp implements AppData {
     } finally {
       this.busy = false;
     }
+    return results;
   }
   async saveBook(book: Book) {
     book.updatedAt = now();
@@ -475,41 +600,66 @@ class GraniteApp implements AppData {
     if (!book.managed) return;
     const root = this.roots.find((r) => r.id === book.rootId);
     if (!root) return;
-    const queue = (this.pluginData["granite.local-cleanup"] ||= []) as {
-      bookId: string;
-      root: LibraryRoot;
-      relativePath: string;
-    }[];
+    const queue = cleanupQueue(this.pluginData[CLEANUP_NAMESPACE]);
     if (!queue.some((q) => q.bookId === book.id))
       queue.push({
         bookId: book.id,
         root: clone(root),
         relativePath: book.relativePath,
+        sha256: book.sha256,
       });
+    this.pluginData[CLEANUP_NAMESPACE] = queue;
   }
   async flushCleanup() {
-    const queue = (this.pluginData["granite.local-cleanup"] || []) as {
-      bookId: string;
-      root: LibraryRoot;
-      relativePath: string;
-    }[];
-    const pending: typeof queue = [];
+    const rawQueue = this.pluginData[CLEANUP_NAMESPACE];
+    if (rawQueue === undefined) return;
+    const queue = cleanupQueue(rawQueue);
+    const pending: CleanupQueueItem[] = [];
     for (const item of queue) {
+      const root = this.roots.find((candidate) => candidate.id === item.root.id);
+      if (!root || !sameRootIdentity(root, item.root)) continue;
+      const tombstone = this.tombstones.find(
+        (candidate) =>
+          candidate.entityType === "book" &&
+          candidate.entityId === item.bookId,
+      );
+      if (
+        !tombstone ||
+        (item.sha256 && tombstone.hash && item.sha256 !== tombstone.hash)
+      )
+        continue;
       if (
         this.books.some(
           (b) =>
-            b.rootId === item.root.id && b.relativePath === item.relativePath,
+            b.id === item.bookId ||
+            (b.rootId === item.root.id &&
+              b.relativePath === item.relativePath),
         )
       )
         continue;
+      if (
+        !root.enabled ||
+        root.readonly ||
+        root.permission === "denied" ||
+        root.permission === "unavailable"
+      ) {
+        pending.push(item);
+        continue;
+      }
       try {
-        await hostCall("book.trash", clone(item));
+        await hostCall("book.trash", {
+          bookId: item.bookId,
+          root: clone(root),
+          relativePath: item.relativePath,
+        });
       } catch {
         pending.push(item);
       }
     }
-    this.pluginData["granite.local-cleanup"] = pending;
-    await this.persist();
+    if (pending.length) this.pluginData[CLEANUP_NAMESPACE] = pending;
+    else delete this.pluginData[CLEANUP_NAMESPACE];
+    if (JSON.stringify(pending) !== JSON.stringify(rawQueue))
+      await this.persist();
   }
   newNote(bookId?: string, quote?: string, location?: ReaderLocation) {
     const at = now();
@@ -800,6 +950,13 @@ class GraniteApp implements AppData {
   async removeRoot(id: string) {
     this.roots = this.roots.filter((r) => r.id !== id);
     for (const b of this.books) if (b.rootId === id) b.available = false;
+    if (this.pluginData[CLEANUP_NAMESPACE] !== undefined) {
+      const pending = cleanupQueue(
+        this.pluginData[CLEANUP_NAMESPACE],
+      ).filter((item) => item.root.id !== id);
+      if (pending.length) this.pluginData[CLEANUP_NAMESPACE] = pending;
+      else delete this.pluginData[CLEANUP_NAMESPACE];
+    }
     if (!this.roots.some((r) => r.isDefault) && this.roots[0])
       this.roots[0].isDefault = true;
     await this.persist();
@@ -938,7 +1095,7 @@ class GraniteApp implements AppData {
     const root = this.roots.find((r) => r.id === book.rootId);
     if (!root) throw new Error("本机未关联此书库，请重新关联或下载书籍。");
     try {
-      const bytes = new Uint8Array(
+      const bytes = nativeHost ? await readNativeBook(clone(root), book.relativePath) : new Uint8Array(
         await hostCall<number[]>("book.read", {
           root: clone(root),
           relativePath: book.relativePath,
@@ -965,6 +1122,7 @@ class GraniteApp implements AppData {
       {
         root: clone(root),
         relativePath: book.relativePath,
+        expectedSha256: book.sha256,
         bytes: Array.from(bytes),
       },
     );
@@ -1087,11 +1245,31 @@ class GraniteApp implements AppData {
     }
   }
   async exportNote(note: Note) {
-    await hostCall("book.export", {
-      filename: `${note.title}.md`,
-      bytes: Array.from(new TextEncoder().encode(note.body)),
-    });
-    this.notify("Markdown 已导出");
+    const attachments = note.attachments || [];
+    if (!attachments.length) {
+      await hostCall("book.export", {
+        filename: `${note.title}.md`,
+        bytes: Array.from(new TextEncoder().encode(note.body)),
+      });
+      this.notify("Markdown 已导出");
+      return;
+    }
+    try {
+      const zip = new JSZip();
+      zip.file(notebookExportMarkdownFileName(note), note.body);
+      await addNotebookAttachmentsToZip(zip, note);
+      const bytes = await zip.generateAsync({
+        type: "uint8array",
+        compression: "DEFLATE",
+      });
+      await hostCall("backup.export", {
+        filename: `${notebookExportBaseName(note)}.zip`,
+        bytes: Array.from(bytes),
+      });
+      this.notify(`Markdown 与 ${attachments.length} 个附件已导出`);
+    } catch (e) {
+      this.fail(e);
+    }
   }
   async exportBackup() {
     this.busy = true;
@@ -1099,8 +1277,10 @@ class GraniteApp implements AppData {
       const zip = new JSZip();
       const state = this.snapshot();
       state.roots = [];
+      if (state.settings.provider)
+        zip.file("provider-profile.json", JSON.stringify(exportProviderConfiguration(state.settings.provider), null, 2));
       state.settings.provider = undefined;
-      for(const key of Object.keys(state.pluginData))if(key.startsWith('granite.local-'))delete state.pluginData[key];
+      state.pluginData = restorablePluginData(state.pluginData);
       for (const b of state.books) {
         const original = this.books.find((x) => x.id === b.id)!;
         try {
@@ -1114,14 +1294,17 @@ class GraniteApp implements AppData {
         b.rootId = "restore-target";
       }
       zip.file("granite-backup.json", JSON.stringify(state, null, 2));
-      for (const n of this.notes)
-        zip.file(
-          `notebook/${n.folder ? `${n.folder}/` : ""}${n.title.replace(/[<>:"/\\|?*]/g, "_")}-${n.id}.md`,
-          n.body,
+      for (const n of this.notes) {
+        zip.file(notebookBackupMarkdownPath(n), n.body);
+        await addNotebookAttachmentsToZip(
+          zip,
+          n,
+          notebookBackupDirectory(n),
         );
+      }
       zip.file(
         "README.txt",
-        "Granite open backup v1. Credentials and device-specific library paths are excluded. Markdown notes and original book files are independently readable.",
+        "Granite open backup v1. Credentials and device-specific library paths are excluded. Markdown notes, notebook attachment files, and original book files are independently readable.",
       );
       const bytes = await zip.generateAsync({
         type: "uint8array",
@@ -1160,6 +1343,10 @@ class GraniteApp implements AppData {
       if (!entry) throw new Error("备份缺少清单。");
       const incoming = JSON.parse(await entry.async("string")) as AppData;
       if (incoming.schemaVersion !== 1) throw new Error("备份版本不兼容。");
+      const providerEntry = zip.file("provider-profile.json");
+      const providerTemplate = providerEntry
+        ? parseProviderConfiguration(JSON.parse(await providerEntry.async("string")))
+        : undefined;
       const root = this.defaultRoot;
       if (!root) throw new Error("请选择恢复目标书库。");
       const staged: Book[] = [];
@@ -1197,21 +1384,36 @@ class GraniteApp implements AppData {
             conflictOf: n.id,
           });
       }
-      for (const key of [
-        "tags",
-        "collections",
-        "sessions",
-        "annotations",
-        "tombstones",
-      ] as const) {
+      for (const key of ["tags", "collections", "annotations"] as const) {
         const list = this[key] as { id: string }[];
-        for (const item of incoming[key])
+        for (const item of Array.isArray(incoming[key]) ? incoming[key] : [])
           if (!list.some((x) => x.id === item.id)) list.push(item);
       }
-      this.pluginData = { ...incoming.pluginData, ...this.pluginData };
-      const provider=this.settings.provider;
-      this.settings={...defaultSettings(),...incoming.settings,provider,reader:{...defaultSettings().reader,...incoming.settings.reader}};
-      for(const plugin of incoming.plugins||[])if(!this.plugins.some(p=>p.id===plugin.id))this.plugins.push({...plugin,enabled:false});
+      for (const item of restorableDeviceRecords<ReadingSession>(
+        incoming.sessions,
+        this.deviceId,
+      ))
+        if (!this.sessions.some((x) => x.id === item.id))
+          this.sessions.push(item);
+      for (const item of restorableDeviceRecords<AppData["tombstones"][number]>(
+        incoming.tombstones,
+        this.deviceId,
+      ))
+        if (!this.tombstones.some((x) => x.id === item.id))
+          this.tombstones.push(item);
+      this.pluginData = {
+        ...restorablePluginData(incoming.pluginData),
+        ...this.pluginData,
+      };
+      if (providerTemplate)
+        this.pluginData["granite.local-provider-template"] = providerTemplate;
+      this.settings = restorableSettings(
+        incoming.settings,
+        this.settings.provider,
+      );
+      for (const plugin of incoming.plugins || [])
+        if (!this.plugins.some((p) => p.id === plugin.id))
+          this.plugins.push({ ...plugin, enabled: false });
       await this.persist();
       this.notify("备份已合并恢复，已有内容保留");
     } catch (e) {
@@ -1437,7 +1639,7 @@ class GraniteApp implements AppData {
     if (this.syncStatus === "syncing") return;
     if (!this.settings.provider) {
       this.navigate("sync");
-      this.notify("请先配置一个 S3 或 WebDAV Provider");
+      this.notify("请先配置一个存储 Provider");
       return;
     }
     this.syncAbort = new AbortController();

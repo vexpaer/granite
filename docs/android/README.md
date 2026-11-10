@@ -5,7 +5,8 @@ adapter lives in `native/android-bridge`; the generated host project lives in
 `src-tauri/gen/android`.
 
 The workflow in `.github/workflows/android.yml` runs JavaScript checks and a
-Debug APK build for pull requests and branch pushes. A `v*` tag builds, signs,
+Debug APK build for pull requests and branch pushes. A manual dispatch builds
+and uploads a verified signed candidate APK. A `v*` tag builds, signs,
 inspects, checksums, and publishes a Release APK. It never starts an emulator
 or builds an AAB.
 
@@ -14,9 +15,10 @@ Related documents:
 - [CI and local toolchain](ci.md)
 - [Native bridge contract](bridge-contract.md)
 - [APK signing and secrets](signing.md)
-- [Physical-device acceptance runbook](physical-device-acceptance.md)
+- [Deferred device and live-provider acceptance runbook](physical-device-acceptance.md)
 
-The physical-device acceptance gate is **WAIVED by the user on 2026-11-09**.
-That waiver is not evidence that a device test passed. CI, APK generation,
-manifest inspection, checksums, and release-signature verification remain
-required.
+Android install/runtime checks and real WebDAV, S3, and cross-device cloud
+checks are **WAIVED for this delivery**. The user will run those manual checks
+later. The waiver is not evidence that the checks passed and does not block the
+first Windows/Android artifact delivery. CI, APK generation, manifest
+inspection, checksums, and release-signature verification remain required.

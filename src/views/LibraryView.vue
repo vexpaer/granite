@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import {
   CheckSquare2,
   Edit3,
@@ -22,6 +22,14 @@ import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import PluginSlots from '../components/PluginSlots.vue';
 import type { Book, Format } from '../types';
+import {
+  readLibraryViewState,
+  resolveLibraryViewStatus,
+  writeLibraryViewState,
+  type LibraryStatus,
+  type LibrarySort,
+  type LibraryViewMode,
+} from '../services/view-state';
 
 const app = useApp();
 const VIRTUAL_OVERSCAN_ROWS = 3;
@@ -30,7 +38,7 @@ const GRID_ROW_GAP = 18;
 const LIST_ROW_HEIGHT = 86;
 const LIST_ROW_GAP = 4;
 
-const statusOptions = [
+const statusOptions: Array<{ id: LibraryStatus; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'reading', label: '阅读中' },
   { id: 'unread', label: '未读' },
@@ -38,18 +46,20 @@ const statusOptions = [
   { id: 'favorite', label: '收藏' },
 ];
 
-const status = ref(String(app.shelfFilter || app.route.id || 'all'));
-const search = ref('');
-const viewMode = ref<'grid' | 'list'>('grid');
-const sort = ref('recent');
-const filtersOpen = ref(false);
+const restoredState = readLibraryViewState();
+const restoredVirtualScrollTop = restoredState.virtualScrollTop;
+const status = ref(resolveLibraryViewStatus(app.route.id, app.shelfFilter));
+const search = ref(restoredState.search);
+const viewMode = ref<LibraryViewMode>(restoredState.viewMode);
+const sort = ref<LibrarySort>(restoredState.sort);
+const filtersOpen = ref(restoredState.filtersOpen);
 const selectionMode = ref(false);
 const selectedIds = ref(new Set<string>());
-const tagFilters = ref<string[]>([]);
-const collectionFilter = ref('');
-const rootFilter = ref('');
-const formatFilter = ref<'' | Format>('');
-const matchAll = ref(false);
+const tagFilters = ref<string[]>([...restoredState.tagFilters]);
+const collectionFilter = ref(restoredState.collectionFilter);
+const rootFilter = ref(restoredState.rootFilter);
+const formatFilter = ref<'' | Format>(restoredState.formatFilter);
+const matchAll = ref(restoredState.matchAll);
 const deleteOpen = ref(false);
 const bulkTagId = ref('');
 const bulkCollectionId = ref('');
@@ -64,19 +74,24 @@ const viewportHeight = ref(560);
 const virtualScrollTop = ref(0);
 let viewportObserver: ResizeObserver | undefined;
 let scrollFrame = 0;
+let restoreFrame = 0;
+let virtualScrollRestored = false;
 
-const filters = reactive({ author: '', missingOnly: false });
+const filters = reactive({
+  author: restoredState.author,
+  missingOnly: restoredState.missingOnly,
+});
 
 watch(
   () => [app.route.id, app.shelfFilter],
   () => {
-    status.value = String(app.shelfFilter || app.route.id || 'all');
+    status.value = resolveLibraryViewStatus(app.route.id, app.shelfFilter);
   },
 );
 
 watch(
   libraryViewport,
-  (element, previous) => {
+  async (element, previous) => {
     if (previous) viewportObserver?.unobserve(previous);
     if (!element) return;
     viewportObserver?.disconnect();
@@ -85,6 +100,23 @@ watch(
       viewportObserver.observe(element);
     }
     measureViewport();
+    if (virtualScrollRestored || restoredVirtualScrollTop <= 0) {
+      virtualScrollRestored = true;
+      return;
+    }
+    await nextTick();
+    if (libraryViewport.value !== element) return;
+    measureViewport();
+    virtualScrollTop.value = restoredVirtualScrollTop;
+    restoreFrame = requestAnimationFrame(() => {
+      if (libraryViewport.value !== element) return;
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      const nextTop = Math.min(restoredVirtualScrollTop, maximum);
+      element.scrollTop = nextTop;
+      virtualScrollTop.value = nextTop;
+      virtualScrollRestored = true;
+      restoreFrame = 0;
+    });
   },
   { flush: 'post' },
 );
@@ -113,6 +145,44 @@ watch(
     if (libraryViewport.value) libraryViewport.value.scrollTop = 0;
   },
 );
+
+watch(
+  () => [
+    status.value,
+    search.value,
+    viewMode.value,
+    sort.value,
+    filtersOpen.value,
+    tagFilters.value.join('\u0000'),
+    collectionFilter.value,
+    rootFilter.value,
+    formatFilter.value,
+    matchAll.value,
+    filters.author,
+    filters.missingOnly,
+    virtualScrollTop.value,
+  ].join('\u0001'),
+  () => persistLibraryState(),
+  { flush: 'post' },
+);
+
+function persistLibraryState() {
+  writeLibraryViewState({
+    status: status.value,
+    search: search.value,
+    viewMode: viewMode.value,
+    sort: sort.value,
+    filtersOpen: filtersOpen.value,
+    tagFilters: tagFilters.value,
+    collectionFilter: collectionFilter.value,
+    rootFilter: rootFilter.value,
+    formatFilter: formatFilter.value,
+    matchAll: matchAll.value,
+    author: filters.author,
+    missingOnly: filters.missingOnly,
+    virtualScrollTop: virtualScrollTop.value,
+  });
+}
 
 const filteredBooks = computed(() => {
   const query = search.value.trim().toLocaleLowerCase('zh-CN');
@@ -246,12 +316,12 @@ function clearFilters() {
   filters.missingOnly = false;
 }
 
-function setStatus(id: string) {
+function setStatus(id: LibraryStatus) {
   status.value = id;
   app.navigate('bookshelf', id);
 }
 
-function setStatusAndSelection(id: string) {
+function setStatusAndSelection(id: LibraryStatus) {
   setStatus(id);
 }
 
@@ -400,8 +470,13 @@ function onVirtualScroll(event: Event) {
 }
 
 onBeforeUnmount(() => {
+  if (libraryViewport.value) {
+    virtualScrollTop.value = libraryViewport.value.scrollTop;
+  }
+  persistLibraryState();
   viewportObserver?.disconnect();
   if (scrollFrame) cancelAnimationFrame(scrollFrame);
+  if (restoreFrame) cancelAnimationFrame(restoreFrame);
 });
 </script>
 
@@ -509,7 +584,7 @@ onBeforeUnmount(() => {
               <span>集合</span>
               <button type="button" @click="openCollectionManager">管理集合</button>
             </span>
-            <select v-model="collectionFilter" class="select">
+            <select v-model="collectionFilter" class="select" aria-label="集合">
               <option value="">全部集合</option>
               <option v-for="collection in app.collections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
             </select>

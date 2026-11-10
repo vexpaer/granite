@@ -7,6 +7,7 @@ on:
       - "**"
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -102,6 +103,10 @@ jobs:
       - name: Build Debug APK
         run: npx tauri android build --debug --apk --target aarch64 --ci
 
+      - name: Test Android bridge
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-android-bridge:testDebugUnitTest --no-daemon
+
       - name: Inspect and checksum Debug APK
         run: bash scripts/android-verify-apk.sh debug
 
@@ -117,8 +122,8 @@ jobs:
           retention-days: 14
 
   release:
-    name: Signed Release APK
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Signed Candidate APK' || 'Signed Release APK' }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -207,19 +212,63 @@ jobs:
       - name: Build signed Release APK
         run: npx tauri android build --apk --target aarch64 --ci
 
+      - name: Test Android bridge
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-android-bridge:testDebugUnitTest --no-daemon
+
       - name: Verify release signature and inspect APK
         run: bash scripts/android-verify-apk.sh release signed
 
-      - name: Prepare release assets
+      - name: Prepare signed APK asset bundle
         run: |
           mkdir -p artifacts/android/release-assets
           APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -path '*/release/*' -name '*.apk' | sort | head -n 1)"
           test -n "$APK"
-          cp "$APK" "artifacts/android/release-assets/Granite-${GITHUB_REF_NAME}-aarch64.apk"
-          cd artifacts/android/release-assets
-          sha256sum ./*.apk > SHA256SUMS
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$(
+              node -e \
+                "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json', 'utf8')).version)"
+            )"
+            test -n "$VERSION"
+            ASSET_NAME="Granite-${VERSION}-candidate-aarch64.apk"
+          else
+            ASSET_NAME="Granite-${GITHUB_REF_NAME}-aarch64.apk"
+          fi
+
+          cp "$APK" "artifacts/android/release-assets/$ASSET_NAME"
+          cp artifacts/android/release/*.txt artifacts/android/release-assets/
+          (
+            cd artifacts/android/release-assets
+            sha256sum "$ASSET_NAME" > SHA256SUMS
+          )
+          echo "SIGNED_APK_ASSET=$ASSET_NAME" >> "$GITHUB_ENV"
+
+      - name: Summarize signed APK artifact
+        run: |
+          {
+            if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+              echo "Signed candidate APK only. This run does not create a GitHub Release."
+            else
+              echo "Signed tag release APK. The release is created only after verification succeeds."
+            fi
+            echo
+            echo "- Asset: \`$SIGNED_APK_ASSET\`"
+            echo "- Checksum: \`artifacts/android/release-assets/SHA256SUMS\`"
+            echo "- Manifest evidence: \`artifacts/android/release-assets/apk-*-manifest.txt\`"
+            echo "- Signature inspection: \`artifacts/android/release-assets/apk-inspection.txt\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: granite-android-signed-${{ github.event_name == 'workflow_dispatch' && 'candidate' || 'release' }}-${{ github.sha }}
+          path: artifacts/android/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Publish GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

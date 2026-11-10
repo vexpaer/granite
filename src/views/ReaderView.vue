@@ -15,6 +15,7 @@ import {
   RefreshCw,
 } from 'lucide-vue-next';
 import {
+  AnnotationType,
   getDocument,
   GlobalWorkerOptions,
   type PDFDocumentProxy,
@@ -65,12 +66,21 @@ import {
 import { assertFormat, parseReflowBook, sniffFormat } from '../reader/format';
 import { searchReflowChapters } from '../reader/text';
 import { matchesShortcut } from '../services/shortcuts';
+import { nativeHost } from '../services/host';
+import {
+  NATIVE_PDF_INITIAL_CHUNK_BYTES,
+  openNativePdfRange,
+  type NativePdfDataRangeTransport,
+} from '../reader/native-range';
 import {
   readPdfAnnotations,
   writePdfAnnotations,
 } from '../reader/pdf-annotations';
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+const PDF_WHOLE_FILE_WRITEBACK_LIMIT = 512 * 1024 * 1024;
+const PDF_ANNOTATION_PAGE_RADIUS = 2;
 
 interface ReflowSurfaceApi {
   jumpTo(location: ReaderLocation, smooth?: boolean): Promise<void>;
@@ -102,6 +112,20 @@ interface PdfSurfaceApi {
   clearSelection(): void;
 }
 
+interface PdfJsAnnotationData {
+  annotationType?: number;
+  annotationFlags?: number;
+  id?: string;
+  rect?: ArrayLike<number>;
+  quadPoints?: ArrayLike<number>;
+  inkLists?: ArrayLike<ArrayLike<number>>;
+  color?: ArrayLike<number>;
+  contentsObj?: { str?: string };
+  titleObj?: { str?: string };
+  creationDate?: string;
+  modificationDate?: string;
+}
+
 const props = defineProps<{ book: Book }>();
 const emit = defineEmits<{ close: [] }>();
 const app = useApp();
@@ -110,6 +134,11 @@ const loadingMessage = ref('正在打开书籍');
 const error = ref('');
 const sourceBytes = shallowRef<Uint8Array>();
 const pdfBytes = shallowRef<Uint8Array>();
+const pdfJsAnnotations = shallowRef<Annotation[]>([]);
+const hydratedPdfAnnotationPages = new Set<number>();
+const hydratedPdfAnnotationsByPage = new Map<number, Annotation[]>();
+const pdfAnnotationHydrationTasks = new Map<number, Promise<void>>();
+const failedPdfAnnotationPages = new Set<number>();
 const reflowBook = shallowRef<ReflowBook>();
 const pdfDocument = shallowRef<PDFDocumentProxy>();
 const reflowSurface = ref<ReflowSurfaceApi>();
@@ -149,6 +178,8 @@ const pdfSaveStatus = ref<'idle' | 'saving' | 'error'>('idle');
 const pdfSaveError = ref('');
 let disposed = false;
 let pdfLoadTask: ReturnType<typeof getDocument> | undefined;
+let nativePdfRange: NativePdfDataRangeTransport | undefined;
+let nativePdfSize: number | undefined;
 let locationTimer: ReturnType<typeof setTimeout> | undefined;
 let searchGeneration = 0;
 let bookSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -170,6 +201,15 @@ const effectiveSettings = computed(() =>
 );
 const isPdf = computed(() => props.book.format === 'pdf');
 const bookAnnotations = computed(() => annotationsForBook(app.annotations, props.book));
+const pdfDisplayAnnotations = computed(() => {
+  const stored = bookAnnotations.value;
+  return [
+    ...stored,
+    ...pdfJsAnnotations.value.filter(
+      (annotation) => !stored.some((existing) => samePdfAnnotationGeometry(existing, annotation)),
+    ),
+  ];
+});
 const tocItems = computed(() => (isPdf.value ? pdfToc.value : reflowToc.value));
 const activeSearchResult = computed(() =>
   searchActiveIndex.value >= 0 ? searchResults.value[searchActiveIndex.value] || null : null,
@@ -204,6 +244,25 @@ function normalizeProgress(value: unknown): number {
   if (!Number.isFinite(numeric)) return 0;
   if (numeric > 1) return clamp01(numeric / 100);
   return clamp01(numeric);
+}
+
+function samePdfAnnotationGeometry(left: Annotation, right: Annotation): boolean {
+  if (
+    left.type !== right.type ||
+    left.location.page !== right.location.page
+  ) {
+    return false;
+  }
+  return (left.rects || []).some((leftRect) =>
+    (right.rects || []).some(
+      (rightRect) =>
+        leftRect.length >= 4 &&
+        rightRect.length >= 4 &&
+        leftRect.slice(0, 4).every(
+          (value, index) => Math.abs(value - rightRect[index]) < 0.5,
+        ),
+    ),
+  );
 }
 
 function normalizeLocation(location: ReaderLocation | undefined, format = props.book.format): ReaderLocation {
@@ -283,50 +342,48 @@ async function loadBook(): Promise<void> {
   pdfToc.value = [];
   reflowToc.value = [];
   cleanupDocuments();
+  sourceBytes.value = undefined;
+  pdfBytes.value = undefined;
+  pdfJsAnnotations.value = [];
+  nativePdfSize = undefined;
   try {
-    loadingMessage.value = '正在读取本地文件';
-    const bytes = await app.readBook(props.book);
-    if (disposed) return;
-    assertFormat(props.book, bytes);
-    const sniffed = sniffFormat(bytes, props.book.relativePath || props.book.title);
-    if (!sniffed) throw new Error('无法识别此文件的实际格式');
-    sourceBytes.value = bytes;
     initialLocation.value = normalizeLocation(props.book.location, props.book.format);
     currentLocation.value = { ...initialLocation.value };
 
-    if (props.book.format === 'pdf') {
-      loadingMessage.value = '正在解析 PDF 与文本层';
-      pdfBytes.value = bytes.slice();
-      pdfLoadTask = getDocument({
-        data: bytes.slice(),
-        useWorkerFetch: true,
-        cMapUrl: '/pdfjs/cmaps/',
-        cMapPacked: true,
-        standardFontDataUrl: '/pdfjs/standard_fonts/',
-        wasmUrl: '/pdfjs/wasm/',
-      });
-      const document = await pdfLoadTask.promise;
-      if (disposed) {
-        await document.destroy();
-        return;
-      }
-      pdfDocument.value = document;
-      currentLocation.value.page = clamp(
-        currentLocation.value.page || 1,
-        1,
-        document.numPages,
-      );
-      await importAnnotationsFromPdf(document.numPages);
+    if (props.book.format === 'pdf' && nativeHost) {
+      await loadNativePdf();
     } else {
-      loadingMessage.value = '正在解析章节、目录与资源';
-      reflowBook.value = await parseReflowBook(
-        props.book,
-        bytes,
-        effectiveSettings.value,
-      );
-      reflowToc.value = reflowBook.value.toc;
-      if (reflowBook.value.warnings.length) {
-        app.notify(reflowBook.value.warnings[0] || '文件包含降级处理的内容');
+      loadingMessage.value = '正在读取本地文件';
+      const bytes = await app.readBook(props.book);
+      if (disposed) return;
+      assertFormat(props.book, bytes);
+      const sniffed = sniffFormat(bytes, props.book.relativePath || props.book.title);
+      if (!sniffed) throw new Error('无法识别此文件的实际格式');
+      if (props.book.format === 'pdf') {
+        loadingMessage.value = '正在解析 PDF 与文本层';
+        pdfBytes.value = bytes.slice();
+        await openPdfDocument({
+          data: bytes.slice(),
+          useWorkerFetch: true,
+          cMapUrl: '/pdfjs/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: '/pdfjs/standard_fonts/',
+          wasmUrl: '/pdfjs/wasm/',
+        });
+        if (disposed || !pdfDocument.value) return;
+        await importAnnotationsFromPdf(pdfDocument.value.numPages);
+      } else {
+        sourceBytes.value = bytes;
+        loadingMessage.value = '正在解析章节、目录与资源';
+        reflowBook.value = await parseReflowBook(
+          props.book,
+          bytes,
+          effectiveSettings.value,
+        );
+        reflowToc.value = reflowBook.value.toc;
+        if (reflowBook.value.warnings.length) {
+          app.notify(reflowBook.value.warnings[0] || '文件包含降级处理的内容');
+        }
       }
     }
     if (disposed) return;
@@ -341,9 +398,71 @@ async function loadBook(): Promise<void> {
   }
 }
 
+async function loadNativePdf(): Promise<void> {
+  const root = app.roots.find((candidate) => candidate.id === props.book.rootId);
+  if (!root) throw new Error('本机未关联此书库，请重新关联或下载书籍。');
+
+  loadingMessage.value = '正在建立 PDF 分块读取';
+  const range = await openNativePdfRange(root, props.book.relativePath, {
+    onError: onNativePdfRangeError,
+  });
+  if (disposed) {
+    range.transport.dispose();
+    return;
+  }
+  assertFormat(props.book, range.initialData);
+  nativePdfRange = range.transport;
+  nativePdfSize = range.stat.size;
+  props.book.available = true;
+
+  loadingMessage.value = '正在解析 PDF 与文本层';
+  await openPdfDocument({
+    range: range.transport,
+    rangeChunkSize: NATIVE_PDF_INITIAL_CHUNK_BYTES,
+    disableStream: true,
+    disableAutoFetch: true,
+    useWorkerFetch: true,
+    cMapUrl: '/pdfjs/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: '/pdfjs/standard_fonts/',
+    wasmUrl: '/pdfjs/wasm/',
+  });
+}
+
+async function openPdfDocument(
+  source: NonNullable<Parameters<typeof getDocument>[0]>,
+): Promise<void> {
+  pdfLoadTask = getDocument(source);
+  const document = await pdfLoadTask.promise;
+  if (disposed) {
+    await document.destroy();
+    return;
+  }
+  pdfDocument.value = document;
+  currentLocation.value.page = clamp(
+    currentLocation.value.page || 1,
+    1,
+    document.numPages,
+  );
+  await hydratePdfJsAnnotations(document, currentLocation.value.page || 1);
+}
+
+function onNativePdfRangeError(cause: Error): void {
+  if (disposed) return;
+  loading.value = false;
+  error.value = `PDF 分块读取失败：${describeReaderError(cause)}`;
+  app.notify(error.value);
+  void pdfLoadTask?.destroy();
+}
+
 function cleanupDocuments(): void {
   reflowBook.value?.destroy?.();
   reflowBook.value = undefined;
+  hydratedPdfAnnotationPages.clear();
+  hydratedPdfAnnotationsByPage.clear();
+  pdfAnnotationHydrationTasks.clear();
+  failedPdfAnnotationPages.clear();
+  pdfJsAnnotations.value = [];
   const document = pdfDocument.value;
   pdfDocument.value = undefined;
   if (document) void document.destroy();
@@ -351,6 +470,155 @@ function cleanupDocuments(): void {
     void pdfLoadTask.destroy();
     pdfLoadTask = undefined;
   }
+  nativePdfRange?.dispose();
+  nativePdfRange = undefined;
+}
+
+async function hydratePdfJsAnnotations(
+  document: PDFDocumentProxy,
+  centerPage = 1,
+): Promise<void> {
+  const first = Math.max(1, centerPage - PDF_ANNOTATION_PAGE_RADIUS);
+  const last = Math.min(document.numPages, centerPage + PDF_ANNOTATION_PAGE_RADIUS);
+  const pages = Array.from(
+    { length: Math.max(0, last - first + 1) },
+    (_, index) => first + index,
+  );
+  await Promise.all(pages.map((page) => hydratePdfJsAnnotationPage(document, page)));
+}
+
+async function hydratePdfJsAnnotationPage(
+  document: PDFDocumentProxy,
+  pageNumber: number,
+): Promise<void> {
+  if (
+    hydratedPdfAnnotationPages.has(pageNumber) ||
+    failedPdfAnnotationPages.has(pageNumber)
+  ) {
+    return;
+  }
+  const existing = pdfAnnotationHydrationTasks.get(pageNumber);
+  if (existing) return existing;
+
+  const task = (async () => {
+    try {
+      const page = await document.getPage(pageNumber);
+      const annotations = await page.getAnnotations({ intent: 'display' });
+      if (disposed || pdfDocument.value !== document) return;
+      const hydrated: Annotation[] = [];
+      for (const entry of annotations as Array<{ data?: PdfJsAnnotationData }>) {
+        if (!entry.data) continue;
+        const annotation = annotationFromPdfJsData(
+          entry.data,
+          pageNumber,
+          document.numPages,
+        );
+        if (annotation) hydrated.push(annotation);
+      }
+      hydratedPdfAnnotationsByPage.set(pageNumber, hydrated);
+      hydratedPdfAnnotationPages.add(pageNumber);
+      pdfJsAnnotations.value = Array.from(hydratedPdfAnnotationsByPage.values())
+        .flat()
+        .sort(
+          (left, right) =>
+            (left.location.page || 0) - (right.location.page || 0) ||
+            left.id.localeCompare(right.id),
+        );
+    } catch {
+      if (disposed || pdfDocument.value !== document) return;
+      failedPdfAnnotationPages.add(pageNumber);
+    } finally {
+      pdfAnnotationHydrationTasks.delete(pageNumber);
+    }
+  })();
+  pdfAnnotationHydrationTasks.set(pageNumber, task);
+  return task;
+}
+
+function annotationFromPdfJsData(
+  data: PdfJsAnnotationData,
+  page: number,
+  pageCount: number,
+): Annotation | null {
+  if ((data.annotationFlags || 0) & 0x22) return null;
+  let type: Annotation['type'] | undefined;
+  if (data.annotationType === AnnotationType.HIGHLIGHT) type = 'highlight';
+  else if (
+    data.annotationType === AnnotationType.UNDERLINE ||
+    data.annotationType === AnnotationType.SQUIGGLY ||
+    data.annotationType === AnnotationType.STRIKEOUT
+  ) {
+    type = 'underline';
+  } else if (data.annotationType === AnnotationType.TEXT) type = 'note';
+  else if (data.annotationType === AnnotationType.INK) type = 'ink';
+  if (!type) return null;
+
+  const rects = pdfJsRects(data);
+  if (!rects.length) return null;
+  const text = typeof data.contentsObj?.str === 'string' ? data.contentsObj.str : '';
+  const ink = data.inkLists
+    ? Array.from(data.inkLists)
+      .map((stroke) => Array.from(stroke).filter(Number.isFinite))
+      .filter((stroke) => stroke.length >= 2)
+    : undefined;
+  const id = typeof data.id === 'string' && data.id
+    ? `pdfjs-${page}-${data.id}`
+    : `pdfjs-${page}-${data.annotationType}-${rects[0].join('-')}`;
+  return {
+    id,
+    bookId: props.book.id,
+    type,
+    text,
+    note: type === 'note' ? text : '',
+    color: pdfJsColor(data.color),
+    rects,
+    ...(type === 'ink' && ink?.length ? { ink } : {}),
+    location: {
+      format: 'pdf',
+      progress: clamp01(page / Math.max(1, pageCount)),
+      page,
+    },
+    createdAt: typeof data.creationDate === 'string' ? data.creationDate : '',
+    updatedAt: typeof data.modificationDate === 'string' ? data.modificationDate : '',
+  };
+}
+
+function pdfJsRects(data: PdfJsAnnotationData): number[][] {
+  const quadPoints = data.quadPoints ? Array.from(data.quadPoints) : [];
+  const rects: number[][] = [];
+  for (let index = 0; index + 7 < quadPoints.length; index += 8) {
+    const xs = quadPoints.slice(index, index + 8).filter((_, point) => point % 2 === 0);
+    const ys = quadPoints.slice(index, index + 8).filter((_, point) => point % 2 === 1);
+    rects.push([
+      Math.min(...xs),
+      Math.min(...ys),
+      Math.max(...xs),
+      Math.max(...ys),
+    ]);
+  }
+  if (rects.length) return rects;
+  const rect = data.rect ? Array.from(data.rect) : [];
+  if (rect.length >= 4 && rect.slice(0, 4).every(Number.isFinite)) {
+    const [left, bottom, right, top] = rect;
+    rects.push([
+      Math.min(left, right),
+      Math.min(bottom, top),
+      Math.max(left, right),
+      Math.max(bottom, top),
+    ]);
+  }
+  return rects;
+}
+
+function pdfJsColor(color: ArrayLike<number> | undefined): string {
+  if (!color || color.length < 3) return '#f4c542';
+  return `#${[0, 1, 2]
+    .map((index) =>
+      Math.max(0, Math.min(255, Math.round(Number(color[index]))))
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`;
 }
 
 async function importAnnotationsFromPdf(pageCount: number): Promise<void> {
@@ -423,9 +691,39 @@ function pdfRecordFromAnnotation(annotation: Annotation): PdfAnnotationRecord | 
 }
 
 function schedulePdfWrite(): void {
-  if (props.book.format !== 'pdf' || !pdfBytes.value) return;
+  if (props.book.format !== 'pdf') return;
   pdfWritePending = true;
   if (!pdfWriteRunning) void runPdfWriteQueue();
+}
+
+async function preparePdfAnnotationEdit(): Promise<void> {
+  if (!nativeHost || !isPdf.value || pdfBytes.value) return;
+  try {
+    await pdfBytesForWriteback();
+  } catch (cause) {
+    pdfSaveStatus.value = 'error';
+    pdfSaveError.value = describeReaderError(cause);
+  }
+}
+
+async function pdfBytesForWriteback(): Promise<Uint8Array> {
+  if (pdfBytes.value) return pdfBytes.value;
+  if (nativeHost) {
+    if (nativePdfSize === undefined) {
+      throw new Error('尚未取得 PDF 文件大小，无法载入完整文件进行标注写回。');
+    }
+    if (nativePdfSize >= PDF_WHOLE_FILE_WRITEBACK_LIMIT) {
+      throw new Error(
+        `此 PDF 为 ${Math.ceil(nativePdfSize / 1024 / 1024)} MiB，超过标注写回可安全载入的 512 MiB 上限。标注仍保留在 Granite 中。`,
+      );
+    }
+  }
+  loadingMessage.value = '首次写回 PDF 标注，正在载入完整文件';
+  const bytes = await app.readBook(props.book);
+  assertFormat(props.book, bytes);
+  pdfBytes.value = bytes;
+  await importAnnotationsFromPdf(pdfDocument.value?.numPages || 0);
+  return bytes;
 }
 
 async function runPdfWriteQueue(): Promise<void> {
@@ -434,17 +732,19 @@ async function runPdfWriteQueue(): Promise<void> {
   pdfSaveStatus.value = 'saving';
   pdfSaveError.value = '';
   try {
-    while (pdfWritePending && pdfBytes.value && props.book.format === 'pdf') {
+    while (pdfWritePending && props.book.format === 'pdf') {
       pdfWritePending = false;
+      const source = await pdfBytesForWriteback();
       const records = bookAnnotations.value
         .filter((annotation) => annotation.type !== 'bookmark')
         .map(pdfRecordFromAnnotation)
         .filter((record): record is PdfAnnotationRecord => Boolean(record));
-      const output = await writePdfAnnotations(pdfBytes.value, records, {
+      const output = await writePdfAnnotations(source, records, {
         removeMissingGraniteAnnotations: true,
       });
       await app.writeBook(props.book, output);
       pdfBytes.value = output;
+      nativePdfSize = output.byteLength;
     }
     pdfSaveStatus.value = 'idle';
   } catch (cause) {
@@ -618,6 +918,9 @@ async function jumpToAnnotation(annotation: Annotation): Promise<void> {
 }
 
 async function deleteAnnotation(annotation: Annotation): Promise<void> {
+  if (isPdf.value && annotation.type !== 'bookmark') {
+    await preparePdfAnnotationEdit();
+  }
   await app.deleteAnnotation(annotation.id);
   if (isPdf.value && annotation.type !== 'bookmark') schedulePdfWrite();
 }
@@ -626,6 +929,9 @@ async function updateAnnotation(
   annotation: Annotation,
   patch: Partial<Pick<Annotation, 'note' | 'color'>>,
 ): Promise<void> {
+  if (isPdf.value && annotation.type !== 'bookmark') {
+    await preparePdfAnnotationEdit();
+  }
   await app.saveAnnotation({ ...annotation, ...patch });
   if (isPdf.value && annotation.type !== 'bookmark') schedulePdfWrite();
 }
@@ -674,6 +980,7 @@ async function createAnnotation(
   if (!selected || selectionBusy.value) return;
   selectionBusy.value = true;
   try {
+    if (isPdf.value) await preparePdfAnnotationEdit();
     const at = new Date().toISOString();
     const annotation: Annotation = {
       id: createId(type),
@@ -739,6 +1046,7 @@ async function createNotebookNote(): Promise<void> {
 }
 
 async function createInk(input: ReaderPdfInkInput): Promise<void> {
+  await preparePdfAnnotationEdit();
   const at = new Date().toISOString();
   const annotation: Annotation = {
     id: createId('ink'),
@@ -826,15 +1134,11 @@ function onPdfViewChange(view: {
   fitMode: PdfFitMode;
 }): void {
   pdfView.value = view;
-  currentLocation.value = {
-    ...currentLocation.value,
-    format: 'pdf',
-    page: view.page,
-    x: view.x,
-    y: view.y,
-    scale: view.scale,
-    rotation: view.rotation,
-  };
+  // The following location-change event owns persistence. Mutating the same
+  // location here made its change detector discard PDF page/zoom changes.
+  if (pdfDocument.value) {
+    void hydratePdfJsAnnotations(pdfDocument.value, view.page);
+  }
 }
 
 function onProgressJump(fraction: number): void {
@@ -1058,7 +1362,7 @@ onBeforeUnmount(() => {
         ref="pdfSurface"
         :pdf-document="pdfDocument"
         :initial-location="initialLocation"
-        :annotations="bookAnnotations"
+        :annotations="pdfDisplayAnnotations"
         :active-search-result="activeSearchResult"
         :active-search-query="searchQuery"
         :tool="pdfTool"

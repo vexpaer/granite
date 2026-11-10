@@ -3,17 +3,30 @@ mod credentials;
 mod database;
 mod error;
 mod filesystem;
+mod local_provider;
 mod models;
 mod network;
 #[cfg(not(target_os = "android"))]
 mod notebook;
 mod paths;
+mod reader_stream;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let result = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_android_bridge::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::SIZE
+                    | tauri_plugin_window_state::StateFlags::POSITION
+                    | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+            )
+            .build(),
+    );
+    let result = builder
         .setup(|app| {
             use tauri::Manager;
 

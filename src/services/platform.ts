@@ -7,8 +7,19 @@ interface PlatformApp {
   importResults:ImportResult[];
   back(): void;
   pauseSession(reason: string): void;
-  importInputs(files: { name: string; bytes: Uint8Array }[]): Promise<void>;
+  importInputs(
+    files: { name: string; bytes: Uint8Array }[],
+  ): Promise<ImportResult[]>;
   notify(message: string): void;
+}
+export function successfulShareAcknowledgementIds(
+  files: { id: string; name: string }[],
+  results: ImportResult[],
+): string[] {
+  return files.flatMap((file, index) => {
+    const status = results[index]?.status;
+    return status === "success" || status === "duplicate" ? [file.id] : [];
+  });
 }
 export const androidHost = () =>
   nativeHost && /Android/i.test(navigator.userAgent);
@@ -37,11 +48,12 @@ export async function initializePlatform(app: PlatformApp) {
       const files =
         await hostCall<{ id:string; name: string; bytes: number[] }[]>("share.consume");
       if (files?.length){
-        await app.importInputs(
+        const results = await app.importInputs(
           files.map((f) => ({ name: f.name, bytes: new Uint8Array(f.bytes) })),
         );
-        const acknowledged=files.filter(file=>app.importResults.some(result=>result.filename===file.name&&['success','duplicate'].includes(result.status))).map(file=>file.id);
-        if(acknowledged.length)await hostCall('share.ack',{ids:acknowledged});
+        const acknowledged = successfulShareAcknowledgementIds(files, results);
+        if (acknowledged.length)
+          await hostCall("share.ack", { ids: acknowledged });
       }
     } catch (e) {
       app.notify(`分享导入失败：${String(e)}`);

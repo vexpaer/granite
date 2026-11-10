@@ -27,6 +27,7 @@ import { defaultSettings, useApp } from '../stores/app';
 import DialogPanel from '../components/DialogPanel.vue';
 import PageHeader from '../components/PageHeader.vue';
 import PluginSlots from '../components/PluginSlots.vue';
+import ProgressRing from '../components/ProgressRing.vue';
 import {
   DEFAULT_HOME_COUNTS,
   DEFAULT_HOME_HIDDEN,
@@ -377,7 +378,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="settings-view page-view">
-    <PageHeader title="设置" description="设置只影响当前设备；书库路径不会同步到其他平台。">
+    <PageHeader title="设置" description="外观与阅读偏好可同步；书库路径与凭证保留在当前设备。">
       <template #actions>
         <span v-if="savedAt" class="saved-note">已于 {{ new Date(savedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }} 保存</span>
         <button class="button button--ghost" type="button" @click="resetDefaults"><RotateCcw :size="15" />恢复默认</button>
@@ -763,7 +764,8 @@ onBeforeUnmount(() => {
         </label>
       </div>
       <div v-if="migrationRunning" class="migration-running" role="status" aria-live="polite">
-        <span class="loading-spinner"></span>
+        <ProgressRing v-if="migrationTotal" :value="migrationCurrent / migrationTotal * 100" :size="48" label="书库迁移进度"><span>{{ Math.round(migrationCurrent / migrationTotal * 100) }}%</span></ProgressRing>
+        <span v-else class="loading-spinner"></span>
         <div>
           <strong>{{ migrationPhaseLabel }}</strong>
           <p v-if="migrationTotal">
@@ -771,15 +773,6 @@ onBeforeUnmount(() => {
             <template v-if="migrationPath"> · {{ migrationPath }}</template>
           </p>
           <p v-else>原书库在确认完成前不会被移除。</p>
-          <progress
-            v-if="migrationTotal"
-            class="migration-running__progress"
-            :value="migrationCurrent"
-            :max="migrationTotal"
-            aria-label="书库迁移进度"
-          >
-            {{ Math.round((migrationCurrent / migrationTotal) * 100) }}%
-          </progress>
         </div>
         <button class="button button--danger button--small" type="button" @click="app.cancelMigration()">取消迁移</button>
       </div>
@@ -1126,32 +1119,6 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   font-size: 0.75rem;
   line-height: 1.5;
-}
-
-.migration-running__progress {
-  width: min(100%, 420px);
-  height: 6px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 999px;
-  margin-top: 0.45rem;
-  color: var(--accent);
-  background: var(--surface-muted);
-}
-
-.migration-running__progress::-webkit-progress-bar {
-  border-radius: inherit;
-  background: var(--surface-muted);
-}
-
-.migration-running__progress::-webkit-progress-value {
-  border-radius: inherit;
-  background: var(--accent);
-}
-
-.migration-running__progress::-moz-progress-bar {
-  border-radius: inherit;
-  background: var(--accent);
 }
 
 .profile-preview {

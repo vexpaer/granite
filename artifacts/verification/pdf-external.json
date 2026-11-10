@@ -1,0 +1,13 @@
+{
+  "engine": "PyMuPDF / MuPDF (independent of the application PDF.js and pdf-lib)",
+  "version": "2.1",
+  "source": "artifacts\\verification\\annotated-standard.pdf",
+  "annotationTypes": [
+    "Highlight",
+    "Ink",
+    "Text",
+    "Underline"
+  ],
+  "annotationsReadableAndEditable": true,
+  "render": "artifacts/verification/pdf-external-render.png"
+}

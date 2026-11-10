@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -18,6 +19,8 @@ const INDEX_DIRECTORY_NAME: &str = ".granite";
 const INDEX_FILE_NAME: &str = "notebook-index.json";
 const INDEX_SCHEMA_VERSION: u32 = 1;
 const MAX_MARKDOWN_BYTES: u64 = 64 * 1024 * 1024;
+const ATTACHMENT_DIRECTORY_NAME: &str = "attachments";
+const ATTACHMENT_HASH_DIRECTORY_NAME: &str = "sha256";
 const NOTE_ID_NAMESPACE: Uuid = Uuid::from_u128(0x2a2a6d4d_6234_4c5b_9e21_5f1c7f7f92d0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -64,7 +67,11 @@ pub fn mirror_state(state: &Value, fallback_library_root: &Path) -> HostResult<(
     let existing_paths = visible_markdown_path_keys(&canonical_notebook)?;
     let notes = match state.get("notes") {
         Some(Value::Array(notes)) => notes.as_slice(),
-        None => &[],
+        None => {
+            return Err(HostError::InvalidArgs(
+                "state.notes must be an array before Notebook mirroring".into(),
+            ));
+        }
         Some(_) => {
             return Err(HostError::InvalidArgs(
                 "state.notes must be an array before Notebook mirroring".into(),
@@ -127,6 +134,11 @@ pub fn mirror_state(state: &Value, fallback_library_root: &Path) -> HostResult<(
         }
 
         let document = render_markdown(note, id, title, folder, body)?;
+        if document.len() as u64 > MAX_MARKDOWN_BYTES {
+            return Err(HostError::Unsupported(format!(
+                "Notebook document for note '{id}' exceeds the {MAX_MARKDOWN_BYTES}-byte limit"
+            )));
+        }
         let document_hash = sha256_bytes(document.as_bytes());
         if let Some(previous) = previous_index.entries.get(id) {
             let indexed_path = previous.relative_path.replace('\\', "/");
@@ -181,6 +193,7 @@ pub fn mirror_state(state: &Value, fallback_library_root: &Path) -> HostResult<(
                 }
             }
         }
+        materialize_attachments(note, &canonical_parent, id)?;
         atomic_write_path(&target, document.as_bytes())?;
         index.entries.insert(
             id.to_owned(),
@@ -450,6 +463,228 @@ fn safe_notebook_folder(folder: &str) -> HostResult<PathBuf> {
         path.push(sanitize_component(component)?);
     }
     Ok(path)
+}
+
+fn materialize_attachments(
+    note: &Map<String, Value>,
+    note_parent: &Path,
+    note_id: &str,
+) -> HostResult<()> {
+    let Some(value) = note.get("attachments") else {
+        return Ok(());
+    };
+    let attachments = value.as_array().ok_or_else(|| {
+        HostError::InvalidArgs(format!("note '{note_id}' attachments must be an array"))
+    })?;
+    for (index, attachment) in attachments.iter().enumerate() {
+        materialize_attachment(attachment, note_parent, note_id, index)?;
+    }
+    Ok(())
+}
+
+fn materialize_attachment(
+    attachment: &Value,
+    note_parent: &Path,
+    note_id: &str,
+    index: usize,
+) -> HostResult<()> {
+    let attachment = attachment.as_object().ok_or_else(|| {
+        HostError::InvalidArgs(format!(
+            "note '{note_id}' attachment {index} must be an object"
+        ))
+    })?;
+    let name = required_string(attachment, "name", "attachment")?;
+    let path = required_string(attachment, "path", "attachment")?;
+    let Some(data_value) = attachment.get("data") else {
+        safe_relative_path(path)?;
+        return Ok(());
+    };
+    if data_value.is_null() {
+        safe_relative_path(path)?;
+        return Ok(());
+    }
+    let data = data_value
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            HostError::InvalidArgs("attachment has no non-empty string 'data' field".into())
+        })?;
+    let (relative_path, expected_hash) = parse_attachment_path(path, name)?;
+    let bytes = decode_attachment_data_url(data, name)?;
+    let actual_hash = sha256_bytes(&bytes);
+    if actual_hash != expected_hash {
+        return Err(HostError::Conflict(format!(
+            "attachment '{name}' content does not match its SHA-256 path"
+        )));
+    }
+
+    let parent_relative = relative_path
+        .parent()
+        .ok_or_else(|| HostError::Forbidden("attachment path has no parent directory".into()))?;
+    let attachment_parent = create_safe_directory(note_parent, parent_relative)?;
+    let file_name = relative_path
+        .file_name()
+        .ok_or_else(|| HostError::Forbidden("attachment path has no file name".into()))?;
+    let target = attachment_parent.join(file_name);
+    ensure_within(note_parent, &target)?;
+
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(HostError::Forbidden(format!(
+                "attachment '{name}' target is an existing symbolic link"
+            )));
+        }
+        Ok(metadata) if metadata.is_dir() => {
+            return Err(HostError::Conflict(format!(
+                "attachment '{name}' content-addressed target is a directory; it was preserved"
+            )));
+        }
+        Ok(metadata) if metadata.is_file() => {
+            let existing_hash = crate::filesystem::sha256_file(&target)?;
+            if existing_hash == expected_hash {
+                return Ok(());
+            }
+            return Err(HostError::Conflict(format!(
+                "attachment '{name}' content-addressed target already contains different bytes; it was preserved"
+            )));
+        }
+        Ok(_) => {
+            return Err(HostError::Conflict(format!(
+                "attachment '{name}' target is not a regular file; it was preserved"
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(HostError::io(
+                format!("failed to inspect attachment '{name}' target"),
+                error,
+            ))
+        }
+    }
+
+    atomic_write_path(&target, &bytes)?;
+    if crate::filesystem::sha256_file(&target)? != expected_hash {
+        return Err(HostError::Storage(format!(
+            "attachment '{name}' checksum changed after atomic write"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_attachment_path(path: &str, name: &str) -> HostResult<(PathBuf, String)> {
+    if path.contains('\\') {
+        return Err(HostError::Forbidden(
+            "attachment paths must use forward slashes".into(),
+        ));
+    }
+    let relative = safe_relative_path(path)?;
+    let components: Vec<_> = relative
+        .iter()
+        .map(|component| component.to_str())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| HostError::InvalidArgs("attachment path must be valid Unicode".into()))?;
+    if components.len() != 4
+        || components[0] != ATTACHMENT_DIRECTORY_NAME
+        || components[1] != ATTACHMENT_HASH_DIRECTORY_NAME
+    {
+        return Err(HostError::Forbidden(
+            "attachment path must be attachments/sha256/<sha256>/<safe-name>".into(),
+        ));
+    }
+    let expected_hash = components[2].to_owned();
+    if expected_hash.len() != 64
+        || !expected_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(HostError::InvalidArgs(
+            "attachment path contains an invalid lowercase SHA-256 value".into(),
+        ));
+    }
+    let safe_name = sanitize_component(name)?;
+    if !is_safe_attachment_name(name) || safe_name != name || components[3] != safe_name {
+        return Err(HostError::Forbidden(
+            "attachment name must be a safe path component matching the relative path".into(),
+        ));
+    }
+    Ok((relative, expected_hash))
+}
+
+fn decode_attachment_data_url(data: &str, name: &str) -> HostResult<Vec<u8>> {
+    let (metadata, encoded) = data
+        .strip_prefix("data:")
+        .and_then(|value| value.split_once(','))
+        .ok_or_else(|| {
+            HostError::InvalidArgs(format!("attachment '{name}' data is not a Base64 Data URL"))
+        })?;
+    let mut metadata_parts = metadata.split(';');
+    let media_type = metadata_parts.next().unwrap_or_default();
+    let encoding = metadata_parts.next();
+    if !valid_media_type(media_type)
+        || !encoding.is_some_and(|value| value.eq_ignore_ascii_case("base64"))
+        || metadata_parts.next().is_some()
+    {
+        return Err(HostError::Unsupported(format!(
+            "attachment '{name}' uses an unsupported or unsafe Data URL; expected data:<mime>;base64,..."
+        )));
+    }
+    if encoded.is_empty() {
+        return Err(HostError::InvalidArgs(format!(
+            "attachment '{name}' contains an empty Base64 payload"
+        )));
+    }
+    if encoded.len() as u64 > MAX_MARKDOWN_BYTES {
+        return Err(HostError::Unsupported(format!(
+            "attachment '{name}' encoded data exceeds the native Notebook limit"
+        )));
+    }
+    let bytes = STANDARD.decode(encoded).map_err(|_| {
+        HostError::InvalidArgs(format!("attachment '{name}' contains invalid Base64 data"))
+    })?;
+    if bytes.len() as u64 > MAX_MARKDOWN_BYTES {
+        return Err(HostError::Unsupported(format!(
+            "attachment '{name}' decoded data exceeds the native Notebook limit"
+        )));
+    }
+    Ok(bytes)
+}
+
+fn valid_media_type(value: &str) -> bool {
+    let Some((kind, subtype)) = value.split_once('/') else {
+        return false;
+    };
+    !kind.is_empty()
+        && !subtype.is_empty()
+        && kind.len() <= 127
+        && subtype.len() <= 127
+        && kind
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && subtype
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && kind.bytes().all(is_media_type_token_byte)
+        && subtype.bytes().all(is_media_type_token_byte)
+}
+
+fn is_safe_attachment_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 120
+        && !value.starts_with(['.', '-'])
+        && !value.ends_with(['.', ' '])
+        && value.chars().all(|character| {
+            character.is_alphanumeric() || matches!(character, '.' | '_' | '-' | ' ')
+        })
+}
+
+fn is_media_type_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-'
+        )
 }
 
 fn render_markdown(
@@ -866,6 +1101,180 @@ mod tests {
         assert!(content.starts_with("---\n"));
         assert!(content.contains("graniteNoteId: note-1"));
         assert!(content.ends_with("# First\n\nBody"));
+    }
+
+    #[test]
+    fn save_materializes_content_addressed_attachments_without_deleting_them() {
+        let library = tempdir().expect("library");
+        let bytes = b"portable attachment";
+        let hash = sha256_bytes(bytes);
+        let relative = format!("attachments/sha256/{hash}/figure.png");
+        let mut state = state_with_note(&format!("# Figure\n\n[Figure]({relative})"));
+        state["notes"][0]["attachments"] = json!([{
+            "name": "figure.png",
+            "path": relative,
+            "data": format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+        }]);
+
+        mirror_state(&state, library.path()).expect("mirror attachment");
+        let note_parent = library.path().join("Notebook/Papers");
+        assert_eq!(
+            fs::read(note_parent.join(&relative)).expect("materialized attachment"),
+            bytes
+        );
+        assert!(note_parent.join("Research Note.md").is_file());
+
+        mirror_state(
+            &json!({"schemaVersion": 1, "roots": [], "notes": []}),
+            library.path(),
+        )
+        .expect("remove note");
+        assert!(!note_parent.join("Research Note.md").exists());
+        assert_eq!(
+            fs::read(note_parent.join(&relative)).expect("attachment retained"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn attachment_materialization_rejects_traversal_and_unsafe_data_urls() {
+        let library = tempdir().expect("library");
+        let bytes = b"payload";
+        let hash = sha256_bytes(bytes);
+        let mut trailing = state_with_note("body");
+        trailing["notes"][0]["attachments"] = json!([{
+            "name": "payload.txt",
+            "path": format!("attachments/sha256/{hash}/../payload.txt"),
+            "data": format!("data:text/plain;base64,{}", STANDARD.encode(bytes))
+        }]);
+        assert!(mirror_state(&trailing, library.path()).is_err());
+        assert!(!library
+            .path()
+            .join("Notebook/Papers/Research Note.md")
+            .exists());
+
+        let mut unsafe_url = state_with_note("body");
+        unsafe_url["notes"][0]["attachments"] = json!([{
+            "name": "payload.txt",
+            "path": format!("attachments/sha256/{hash}/payload.txt"),
+            "data": "data:text/plain,payload"
+        }]);
+        assert!(mirror_state(&unsafe_url, library.path()).is_err());
+        assert!(!library
+            .path()
+            .join("Notebook/Papers/Research Note.md")
+            .exists());
+    }
+
+    #[test]
+    fn attachment_materialization_verifies_content_address_hash() {
+        let library = tempdir().expect("library");
+        let expected = b"expected";
+        let wrong = b"wrong";
+        let expected_hash = sha256_bytes(expected);
+        let mut state = state_with_note("body");
+        state["notes"][0]["attachments"] = json!([{
+            "name": "payload.bin",
+            "path": format!("attachments/sha256/{expected_hash}/payload.bin"),
+            "data": format!("application/octet-stream;base64,{}", STANDARD.encode(wrong))
+        }]);
+        state["notes"][0]["attachments"][0]["data"] = Value::String(format!(
+            "data:application/octet-stream;base64,{}",
+            STANDARD.encode(wrong)
+        ));
+
+        assert!(mirror_state(&state, library.path()).is_err());
+        assert!(!library
+            .path()
+            .join("Notebook/Papers/Research Note.md")
+            .exists());
+    }
+
+    #[test]
+    fn attachment_materialization_preserves_conflicting_hash_path() {
+        let library = tempdir().expect("library");
+        let expected = b"expected";
+        let conflict = b"different existing bytes";
+        let hash = sha256_bytes(expected);
+        let relative = Path::new("attachments")
+            .join("sha256")
+            .join(&hash)
+            .join("payload.bin");
+        let target = library.path().join("Notebook/Papers").join(&relative);
+        fs::create_dir_all(target.parent().expect("attachment parent"))
+            .expect("attachment directory");
+        fs::write(&target, conflict).expect("conflicting attachment");
+        let mut state = state_with_note("body");
+        state["notes"][0]["attachments"] = json!([{
+            "name": "payload.bin",
+            "path": relative.to_string_lossy().replace('\\', "/"),
+            "data": format!("data:application/octet-stream;base64,{}", STANDARD.encode(expected))
+        }]);
+
+        assert!(mirror_state(&state, library.path()).is_err());
+        assert_eq!(
+            fs::read(target).expect("conflicting bytes preserved"),
+            conflict
+        );
+        assert!(!library
+            .path()
+            .join("Notebook/Papers/Research Note.md")
+            .exists());
+    }
+
+    #[test]
+    fn save_metadata_only_attachment_preserves_external_file_and_frontmatter() {
+        let library = tempdir().expect("library");
+        let bytes = b"metadata-only external attachment";
+        let relative = "assets/external.pdf";
+        let note_parent = library.path().join("Notebook/Papers");
+        let external_file = note_parent.join(relative);
+        fs::create_dir_all(external_file.parent().expect("attachment parent"))
+            .expect("attachment directory");
+        fs::write(&external_file, bytes).expect("external attachment");
+
+        let mut state = state_with_note(&format!("# External\n\n[PDF]({relative})"));
+        state["notes"][0]["attachments"] = json!([{
+            "name": "external.pdf",
+            "path": relative
+        }]);
+
+        mirror_state(&state, library.path()).expect("state save with metadata-only attachment");
+        let note_path = note_parent.join("Research Note.md");
+        let content = fs::read_to_string(&note_path).expect("mirrored note");
+        assert!(content.contains("path: assets/external.pdf"));
+        assert!(!content.contains("data:"));
+        assert_eq!(
+            fs::read(&external_file).expect("external attachment retained"),
+            bytes
+        );
+
+        state["notes"][0]["attachments"][0]["data"] = Value::Null;
+        mirror_state(&state, library.path()).expect("state save with null attachment data");
+        let content = fs::read_to_string(&note_path).expect("mirrored null-data note");
+        assert!(content.contains("path: assets/external.pdf"));
+        assert!(content.contains("data: null"));
+        assert_eq!(
+            fs::read(&external_file).expect("external attachment retained after null data"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn missing_notes_field_does_not_trash_managed_notes() {
+        let library = tempdir().expect("library");
+        let mut state = state_with_note("Keep me");
+        mirror_state(&state, library.path()).expect("initial mirror");
+        let note_path = library.path().join("Notebook/Papers/Research Note.md");
+        let original = fs::read_to_string(&note_path).expect("read note");
+
+        state.as_object_mut().expect("state object").remove("notes");
+        assert!(mirror_state(&state, library.path()).is_err());
+        assert_eq!(
+            fs::read_to_string(&note_path).expect("managed note remains"),
+            original
+        );
+        assert!(!library.path().join("Notebook/.granite/trash").exists());
     }
 
     #[test]

@@ -101,6 +101,31 @@ internal class SafFileSystem(private val context: Context) {
         return readDocument(file)
     }
 
+    fun statBook(root: JsonNode, relativePath: String): JSObject {
+        val file = resolveFile(rootDirectory(root), relativePath)
+        return JSObject().put(
+            "size",
+            UriRangeReader.size(context, file.uri, file.length()),
+        )
+    }
+
+    fun readBookRange(
+        root: JsonNode,
+        relativePath: String,
+        offset: Long,
+        length: Long,
+    ): ByteArray {
+        val range = BookRangeRules.validate(offset, length)
+        val file = resolveFile(rootDirectory(root), relativePath)
+        val size = UriRangeReader.size(context, file.uri, file.length())
+        BookRangeRules.validateBounds(size, range)
+        val bytes = UriRangeReader.read(context, file.uri, range.offset, range.length)
+        if (bytes.size != range.length) {
+            throw BridgeFailure("Book changed during the ranged read")
+        }
+        return bytes
+    }
+
     fun locateBook(root: JsonNode, relativePath: String): Boolean {
         return findExistingFile(rootDirectory(root), relativePath)?.isFile == true
     }
@@ -111,6 +136,9 @@ internal class SafFileSystem(private val context: Context) {
         }
         val tree = rootDirectory(root)
         requireWritable(tree)
+        if (!BookSafetyRules.isManagedRelativePath(relativePath)) {
+            throw BridgeFailure("Only Granite-managed books can be moved to recoverable trash")
+        }
         rejectProtectedRelativePath(relativePath)
         val expectedName = safeRelativeParts(relativePath).last()
         val safeBookId = safePathComponent(bookId, "book ID")
@@ -163,6 +191,12 @@ internal class SafFileSystem(private val context: Context) {
                 )
             }
 
+            try {
+                if (sourceParent.listFiles().isEmpty()) sourceParent.delete()
+            } catch (_: Exception) {
+                // Empty managed-directory cleanup is best effort after the
+                // verified trash move has already completed.
+            }
             return JSObject().put("trashed", true)
         } catch (exception: Exception) {
             if (!source.exists() && destination.exists()) {
@@ -181,6 +215,9 @@ internal class SafFileSystem(private val context: Context) {
     }
 
     fun importBook(root: JsonNode, requestedName: String, bytes: ByteArray): ImportedBook {
+        if (bytes.isEmpty()) {
+            throw BridgeFailure("refusing to import an empty book file")
+        }
         val tree = rootDirectory(root)
         requireWritable(tree)
         val safeName = sanitizeFilename(requestedName)
@@ -188,32 +225,56 @@ internal class SafFileSystem(private val context: Context) {
             throw BridgeFailure("Unsupported book format")
         }
 
-        val uniqueName = uniqueName(tree, safeName)
-        val file = tree.createFile(mimeTypeForName(uniqueName), uniqueName)
-            ?: throw BridgeFailure("The selected folder does not allow file creation")
-        val actualName = file.name ?: uniqueName
+        val books = ensureDirectory(tree, MANAGED_BOOKS_DIRECTORY)
+        val bookId = UUID.randomUUID().toString()
+        val relativePath = BookSafetyRules.managedRelativePath(bookId, safeName)
+        val bookDirectory = books.createDirectory(bookId)
+            ?: throw BridgeFailure("The selected folder does not allow managed book storage")
+        if (bookDirectory.name != bookId || !bookDirectory.isDirectory) {
+            bookDirectory.delete()
+            throw BridgeFailure("The SAF provider changed the managed book directory name")
+        }
+        var file: DocumentFile? = null
 
         try {
-            writeDocument(file, bytes)
-            val verification = hashDocument(file)
+            val created = bookDirectory.createFile(mimeTypeForName(safeName), safeName)
+                ?: throw BridgeFailure("The selected folder does not allow file creation")
+            file = created
+            val actualName = created.name
+                ?: throw BridgeFailure("The SAF provider did not expose the managed filename")
+            if (actualName != safeName || !created.isFile) {
+                throw BridgeFailure("The SAF provider changed the managed book filename")
+            }
+            writeDocument(created, bytes)
+            val verification = hashDocument(created)
             val expected = sha256(bytes)
             if (verification.size != bytes.size.toLong() || verification.sha256 != expected) {
-                file.delete()
+                created.delete()
                 throw BridgeFailure("Book copy verification failed")
             }
             return ImportedBook(
                 name = actualName,
-                relativePath = actualName,
+                relativePath = relativePath,
                 sha256 = expected,
                 size = bytes.size.toLong(),
             )
         } catch (exception: Exception) {
-            if (file.exists()) file.delete()
+            file?.takeIf(DocumentFile::exists)?.delete()
+            if (bookDirectory.listFiles().isEmpty()) bookDirectory.delete()
             throw exception
         }
     }
 
-    fun writeBook(root: JsonNode, relativePath: String, bytes: ByteArray): JSObject {
+    fun writeBook(
+        root: JsonNode,
+        relativePath: String,
+        bytes: ByteArray,
+        expectedSha256: String?,
+    ): JSObject {
+        if (bytes.isEmpty()) {
+            throw BridgeFailure("refusing to replace a book with an empty file")
+        }
+        val requiredCurrentHash = BookSafetyRules.normalizeExpectedSha256(expectedSha256)
         val tree = rootDirectory(root)
         requireWritable(tree)
         val target = resolveFile(tree, relativePath)
@@ -221,12 +282,15 @@ internal class SafFileSystem(private val context: Context) {
             ?: throw BridgeFailure("Cannot resolve the book's parent folder")
         val originalName = target.name
             ?: throw BridgeFailure("Cannot resolve the book filename")
-        val expectedHash = sha256(bytes)
+        val replacementHash = sha256(bytes)
+        val currentAtStart = hashDocument(target)
+        BookSafetyRules.requireExpectedHash(currentAtStart.sha256, requiredCurrentHash)
         var backup: DocumentFile? = null
         var temporary: DocumentFile? = null
+        var originalRemoved = false
 
         try {
-            backup = copyToUniqueBackup(parent, target, originalName)
+            backup = copyToUniqueBackup(parent, target, originalName, currentAtStart)
             temporary = parent.createFile(
                 "application/octet-stream",
                 ".granite-tmp-${UUID.randomUUID()}-${sanitizeFilename(originalName)}",
@@ -234,28 +298,53 @@ internal class SafFileSystem(private val context: Context) {
             writeDocument(temporary, bytes)
 
             val temporaryHash = hashDocument(temporary)
-            if (temporaryHash.size != bytes.size.toLong() || temporaryHash.sha256 != expectedHash) {
+            if (
+                temporaryHash.size != bytes.size.toLong() ||
+                temporaryHash.sha256 != replacementHash
+            ) {
                 throw BridgeFailure("Temporary book write verification failed")
             }
 
-            replaceDocument(parent, target, temporary, originalName)
+            replaceDocument(parent, target, temporary, originalName, currentAtStart) {
+                originalRemoved = true
+            }
             temporary = null
 
             val replacement = findExistingFile(tree, relativePath)
                 ?: throw BridgeFailure("Book disappeared after replacement")
             val finalHash = hashDocument(replacement)
-            if (finalHash.size != bytes.size.toLong() || finalHash.sha256 != expectedHash) {
-                restoreBackup(tree, relativePath, backup)
-                throw BridgeFailure("Final book verification failed; the backup was restored")
+            if (
+                finalHash.size != bytes.size.toLong() ||
+                finalHash.sha256 != replacementHash
+            ) {
+                throw BridgeFailure("Final book write verification failed")
             }
 
+            backup?.delete()
+            backup = null
             return JSObject()
-                .put("sha256", expectedHash)
+                .put("sha256", replacementHash)
                 .put("size", bytes.size.toLong())
         } catch (exception: Exception) {
             temporary?.delete()
-            if (backup != null && (!findExistingFile(tree, relativePath)?.isFile.orTrue())) {
-                restoreBackup(tree, relativePath, backup)
+            var rollbackFailure: Exception? = null
+            if (originalRemoved) {
+                try {
+                    backup?.let { restoreBackup(tree, relativePath, it, currentAtStart) }
+                    backup = null
+                } catch (error: Exception) {
+                    rollbackFailure = error
+                }
+            } else {
+                backup?.delete()
+                backup = null
+            }
+            if (rollbackFailure != null) {
+                throw BridgeFailure(
+                    "Book write failed and rollback also failed; the verified backup was " +
+                        "retained in the managed book directory: " +
+                        (rollbackFailure.message ?: exception.message ?: "unknown error"),
+                )
             }
             throw exception
         }
@@ -532,7 +621,7 @@ internal class SafFileSystem(private val context: Context) {
             return existing
         }
         return parent.createDirectory(name)
-            ?: throw BridgeFailure("The selected folder does not allow Granite trash storage")
+            ?: throw BridgeFailure("The selected folder does not allow Granite managed storage")
     }
 
     private fun hasTrashCopy(tree: DocumentFile, bookId: String, originalName: String): Boolean {
@@ -659,6 +748,7 @@ internal class SafFileSystem(private val context: Context) {
         parent: DocumentFile,
         source: DocumentFile,
         originalName: String,
+        expectedSource: HashResult,
     ): DocumentFile {
         val timestamp = System.currentTimeMillis()
         val backupName = uniqueName(parent, "$originalName.granite-backup-$timestamp")
@@ -667,8 +757,11 @@ internal class SafFileSystem(private val context: Context) {
         try {
             val sourceHash = copyDocument(source, backup)
             val backupHash = hashDocument(backup)
-            if (sourceHash != backupHash) {
-                throw BridgeFailure("Safety backup verification failed")
+            if (sourceHash != expectedSource || backupHash != expectedSource) {
+                throw BridgeFailure(
+                    "Book changed while creating the safety backup; " +
+                        "the current file was preserved",
+                )
             }
             return backup
         } catch (exception: Exception) {
@@ -682,10 +775,14 @@ internal class SafFileSystem(private val context: Context) {
         target: DocumentFile,
         temporary: DocumentFile,
         originalName: String,
+        expectedSource: HashResult,
+        onOriginalRemoved: () -> Unit,
     ) {
+        BookSafetyRules.requireUnchanged(hashDocument(target).sha256, expectedSource.sha256)
         if (!target.delete()) {
             throw BridgeFailure("The selected provider does not allow safe replacement")
         }
+        onOriginalRemoved()
         if (temporary.renameTo(originalName)) return
 
         val replacement = parent.createFile(mimeTypeForName(originalName), originalName)
@@ -700,6 +797,7 @@ internal class SafFileSystem(private val context: Context) {
         tree: DocumentFile,
         relativePath: String,
         backup: DocumentFile,
+        expected: HashResult,
     ) {
         val name = safeRelativeParts(relativePath).last()
         val parent = backup.parentFile ?: tree
@@ -707,18 +805,22 @@ internal class SafFileSystem(private val context: Context) {
         if (current != null && !current.delete()) {
             throw BridgeFailure("Book replacement failed and the damaged file could not be removed")
         }
-        if (!backup.renameTo(name)) {
+        if (backup.renameTo(name)) {
+            val restored = parent.findFile(name)
+                ?: throw BridgeFailure("Book replacement failed and the backup disappeared")
+            if (hashDocument(restored) != expected) {
+                throw BridgeFailure("Book replacement failed and restored-byte verification failed")
+            }
+        } else {
             val restored = parent.createFile(backup.type ?: mimeTypeForName(name), name)
                 ?: throw BridgeFailure("Book replacement failed and the backup could not be restored")
             val copied = copyDocument(backup, restored)
             val verified = hashDocument(restored)
-            if (copied != verified) {
+            if (copied != expected || verified != expected) {
                 throw BridgeFailure("Book replacement failed and backup verification failed")
             }
         }
     }
-
-    private fun Boolean?.orTrue(): Boolean = this ?: true
 
     private fun mimeTypeForName(name: String): String = when (bookFormat(name)) {
         "epub" -> "application/epub+zip"
@@ -735,6 +837,7 @@ internal class SafFileSystem(private val context: Context) {
 
     companion object {
         private const val MAX_RELATIVE_PATH_LENGTH = 4096
+        private const val MANAGED_BOOKS_DIRECTORY = "books"
         private const val INTERNAL_DIRECTORY_NAME = ".granite"
         private const val NOTEBOOK_DIRECTORY_NAME = "Notebook"
         private const val TRASH_DIRECTORY_NAME = "trash"

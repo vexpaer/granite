@@ -1070,9 +1070,9 @@ class IframeSandboxTransport implements SandboxTransport {
   private readonly token = createSandboxToken()
   private startContext?: SandboxStartContext
   private readyGate?: SandboxReadyGate
-  private bootstrapUrl?: string
   private activationRequested = false
   private disposePromise?: Promise<void>
+  private detachView?: () => void
   private readonly pending = new Map<
     number,
     {
@@ -1113,9 +1113,10 @@ window.addEventListener('message', async (event) => {
 });
 post({ type: 'sandbox-ready' });
 `
-    this.bootstrapUrl = URL.createObjectURL(
-      new Blob([bootstrap], { type: 'text/javascript' }),
-    )
+    // An opaque sandbox cannot fetch a blob owned by its parent origin.
+    // A data script starts inside the opaque origin; the plugin module's blob
+    // is then created there, keeping DOM, storage and native IPC isolated.
+    const bootstrapUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(bootstrap)}`
     this.iframe = document.createElement('iframe')
     this.iframe.dataset.granitePluginId = this.pluginId
     this.iframe.setAttribute('sandbox', 'allow-scripts')
@@ -1123,7 +1124,7 @@ post({ type: 'sandbox-ready' });
     this.iframe.style.display = 'none'
     window.addEventListener('message', this.handleMessage)
     try {
-      this.iframe.srcdoc = this.documentSource(this.bootstrapUrl)
+      this.iframe.srcdoc = this.documentSource(bootstrapUrl)
       document.body.appendChild(this.iframe)
       await ready
     } catch (error) {
@@ -1136,7 +1137,7 @@ post({ type: 'sandbox-ready' });
     const escapedBootstrapUrl = bootstrapUrl
       .replace(/&/g, '&amp;')
       .replace(/"/g, '&quot;')
-    return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; media-src data: blob:; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><style>html,body{margin:0;width:100%;height:100%;overflow:auto;font:14px system-ui;background:transparent;color:#282333}body{box-sizing:border-box;padding:16px}</style></head><body><div id="app"></div><script src="${escapedBootstrapUrl}"></script></body></html>`
+    return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src data: blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; media-src data: blob:; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><style>html,body{margin:0;width:100%;height:100%;overflow:auto;font:14px system-ui;background:transparent;color:#282333}body{box-sizing:border-box;padding:16px}</style></head><body><div id="app"></div><script src="${escapedBootstrapUrl}"></script></body></html>`
   }
 
   private prepareReady(): Promise<void> {
@@ -1163,8 +1164,6 @@ post({ type: 'sandbox-ready' });
     if (!data || data.token !== this.token) return
     switch (data.type) {
       case 'sandbox-ready':
-        if (this.bootstrapUrl) URL.revokeObjectURL(this.bootstrapUrl)
-        this.bootstrapUrl = undefined
         if (!this.activationRequested && this.startContext) {
           this.activationRequested = true
           this.post({
@@ -1249,14 +1248,50 @@ post({ type: 'sandbox-ready' });
 
   mount(container: HTMLElement): () => void {
     if (!this.iframe) throw new Error('sandbox iframe is not running')
-    this.iframe.style.display = 'block'
-    this.iframe.style.width = '100%'
-    this.iframe.style.height = '100%'
-    this.iframe.style.border = '0'
-    container.appendChild(this.iframe)
-    return () => {
-      if (this.iframe?.parentElement === container) this.iframe.remove()
+    this.detachView?.()
+    const iframe = this.iframe
+    // Reparenting an iframe destroys its browsing context, even when the same
+    // element is reused. Keep the sandbox connected and place its viewport over
+    // the registered surface, so navigation cannot restart an enabled plugin.
+    const place = () => {
+      const rect = container.getBoundingClientRect()
+      let top = Math.max(0, rect.top)
+      let left = Math.max(0, rect.left)
+      let right = Math.min(window.innerWidth, rect.right)
+      let bottom = Math.min(window.innerHeight, rect.bottom)
+      for (let parent = container.parentElement; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent)
+        const clip = parent.getBoundingClientRect()
+        if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
+          top = Math.max(top, clip.top)
+          bottom = Math.min(bottom, clip.bottom)
+        }
+        if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) {
+          left = Math.max(left, clip.left)
+          right = Math.min(right, clip.right)
+        }
+      }
+      Object.assign(iframe.style, {
+        display: right > left && bottom > top ? 'block' : 'none',
+        position: 'fixed', top: `${rect.top}px`, left: `${rect.left}px`,
+        width: `${rect.width}px`, height: `${rect.height}px`, border: '0', zIndex: '10',
+        clipPath: `inset(${Math.max(0, top - rect.top)}px ${Math.max(0, rect.right - right)}px ${Math.max(0, rect.bottom - bottom)}px ${Math.max(0, left - rect.left)}px)`,
+      })
     }
+    const observer = new ResizeObserver(place)
+    observer.observe(container)
+    window.addEventListener('resize', place)
+    document.addEventListener('scroll', place, true)
+    place()
+    const detach = () => {
+      observer.disconnect()
+      window.removeEventListener('resize', place)
+      document.removeEventListener('scroll', place, true)
+      iframe.style.display = 'none'
+      if (this.detachView === detach) this.detachView = undefined
+    }
+    this.detachView = detach
+    return detach
   }
 
   private rejectPending(error: Error): void {
@@ -1274,6 +1309,7 @@ post({ type: 'sandbox-ready' });
 
   private async disposeInternal(): Promise<void> {
     this.failReady(new Error(`plugin iframe ${this.pluginId} was disposed before activation`))
+    this.detachView?.()
     window.removeEventListener('message', this.handleMessage)
     if (this.iframe) {
       try {
@@ -1292,8 +1328,6 @@ post({ type: 'sandbox-ready' });
       this.iframe = undefined
     }
     this.rejectPending(new Error('sandbox iframe disposed'))
-    if (this.bootstrapUrl) URL.revokeObjectURL(this.bootstrapUrl)
-    this.bootstrapUrl = undefined
     this.startContext = undefined
   }
 }

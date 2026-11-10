@@ -181,6 +181,11 @@ pub async fn provider_request(
                 })?,
             );
         }
+        ProviderType::Local => {
+            return Err(HostError::Unsupported(
+                "local provider requests must be handled by the local filesystem host".into(),
+            ));
+        }
     }
 
     let client = reqwest::Client::builder()
@@ -494,6 +499,7 @@ mod tests {
             prefix: "Granite/objects".into(),
             credential_id: "credential".into(),
             access_key_id: Some("ACCESS".into()),
+            root: None,
         }
     }
 

@@ -37,10 +37,15 @@ import {
   dedupeReadingSessions,
   summarizeReadingSessions,
 } from '../../packages/core/index';
+import {
+  readStatisticsViewState,
+  writeStatisticsViewState,
+  type StatisticsRange,
+} from '../services/view-state';
 
 const app = useApp();
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-const range = ref<'day' | 'week' | 'month' | 'year'>('month');
+const range = ref<StatisticsRange>(readStatisticsViewState().range);
 const calendarMonth = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 const selectedDate = ref(dateKey(new Date()));
 const goalDraft = ref(app.settings.dailyGoal);
@@ -51,6 +56,10 @@ const correctionEnd = ref('');
 const correctionMinutes = ref('0');
 const correctionError = ref('');
 const savingCorrection = ref(false);
+
+watch(range, (value) => {
+  writeStatisticsViewState({ range: value });
+});
 
 watch(
   () => app.settings.dailyGoal,

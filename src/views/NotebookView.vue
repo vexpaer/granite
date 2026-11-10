@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import {
   ArrowLeft,
   BookOpen,
@@ -28,12 +26,22 @@ import DialogPanel from '../components/DialogPanel.vue';
 import EmptyState from '../components/EmptyState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import { formatDateTime, plainText, relativeTime } from '../components/utils';
+import {
+  createNotebookAttachment,
+  decodeAttachmentDataUrl,
+  insertAttachmentMarkdown,
+  normalizePortableAttachmentPath,
+  removeAttachmentMarkdown,
+  renderNotebookMarkdown,
+  type NotebookAttachment,
+} from '../services/notebook-files';
 import type { Note } from '../types';
 
 const app = useApp();
 const query = ref('');
 const folderFilter = ref('');
-const tagFilter = ref('');
+const tagFilters = ref<string[]>([]);
+const matchAllTags = ref(false);
 const mode = ref<'source' | 'preview'>('source');
 const mobileEditorOpen = ref(false);
 const explorerOpen = ref(true);
@@ -45,7 +53,9 @@ const deleteOpen = ref(false);
 const attachmentInput = ref<HTMLInputElement>();
 const markdownInput = ref<HTMLInputElement>();
 const previewEl = ref<HTMLElement>();
+const bodyInput = ref<HTMLTextAreaElement>();
 const draft = ref<Note | null>(null);
+const attachmentInsertPosition = ref(0);
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressWatch = false;
 const pendingDrafts = new Map<string, Note>();
@@ -93,10 +103,13 @@ const filteredNotes = computed(() => {
   const value = query.value.trim().toLocaleLowerCase('zh-CN');
   return [...app.notes]
     .filter((note) => {
-      if (!folderFilter.value && tagFilter.value === '') return true;
+      if (!folderFilter.value && tagFilters.value.length === 0) return true;
       if (folderFilter.value === '__root__' && note.folder) return false;
       if (folderFilter.value && folderFilter.value !== '__root__' && note.folder !== folderFilter.value) return false;
-      if (tagFilter.value && !note.tagIds.includes(tagFilter.value)) return false;
+      if (tagFilters.value.length) {
+        const matches = tagFilters.value.filter((id) => note.tagIds.includes(id));
+        if (matchAllTags.value ? matches.length !== tagFilters.value.length : matches.length === 0) return false;
+      }
       return true;
     })
     .filter((note) => {
@@ -133,14 +146,7 @@ const backlinks = computed(() => {
 
 const renderedNote = computed(() => {
   if (!draft.value) return '';
-  const source = draft.value.body.replace(
-    /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-    (_match, target: string, label?: string) =>
-      `[${label || target}](#wikilink:${encodeURIComponent(target.trim())})`,
-  );
-  return DOMPurify.sanitize(marked.parse(source) as string, {
-    ADD_ATTR: ['target', 'rel'],
-  });
+  return renderNotebookMarkdown(draft.value.body, draft.value.attachments);
 });
 
 watch(
@@ -281,42 +287,84 @@ function toggleTag(id: string) {
     : [...draft.value.tagIds, id];
 }
 
-function openAttachment(name: string, path: string, data?: string) {
-  if (!data) {
-    app.notify(`附件“${name}”只有相对路径 ${path}，当前未嵌入可预览内容。`);
+function toggleTagFilter(id: string) {
+  tagFilters.value = tagFilters.value.includes(id)
+    ? tagFilters.value.filter((value) => value !== id)
+    : [...tagFilters.value, id];
+}
+
+function openAttachment(attachment: NotebookAttachment) {
+  if (!attachment.data) {
+    app.notify(`附件“${attachment.name}”只有相对路径 ${attachment.path}，当前未嵌入可下载内容。`);
     return;
   }
-  const anchor = document.createElement('a');
-  anchor.href = data;
-  anchor.download = name;
-  anchor.click();
+  try {
+    const { bytes } = decodeAttachmentDataUrl(attachment.data);
+    const url = URL.createObjectURL(
+      new Blob([bytes.slice().buffer], { type: 'application/octet-stream' }),
+    );
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = attachment.name;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (error) {
+    app.notify(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function chooseAttachment() {
+  attachmentInsertPosition.value = bodyInput.value?.selectionStart ?? draft.value?.body.length ?? 0;
+  attachmentInput.value?.click();
 }
 
 async function addAttachment(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file || !draft.value) return;
-  const data = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-  draft.value.attachments = [
-    ...(draft.value.attachments || []),
-    {
-      name: file.name,
-      path: `attachments/${file.name}`,
-      data,
-    },
-  ];
-  input.value = '';
-  await saveDraft();
+  const currentDraft = draft.value;
+  try {
+    const attachment = await createNotebookAttachment(
+      file.name,
+      file.type,
+      new Uint8Array(await file.arrayBuffer()),
+    );
+    if (draft.value !== currentDraft) {
+      app.notify('笔记已切换，附件未插入');
+      return;
+    }
+    suppressWatch = true;
+    try {
+      const attachments = currentDraft.attachments || [];
+      if (!attachments.some((candidate) => candidate.path === attachment.path)) {
+        currentDraft.attachments = [...attachments, attachment];
+      }
+      currentDraft.body = insertAttachmentMarkdown(
+        currentDraft.body,
+        attachment,
+        attachmentInsertPosition.value,
+      );
+      await nextTick();
+    } finally {
+      suppressWatch = false;
+    }
+    pendingDrafts.set(currentDraft.id, JSON.parse(JSON.stringify(currentDraft)));
+    await saveDraft();
+    app.notify(`附件“${attachment.name}”已插入正文`);
+  } catch (error) {
+    app.notify(error instanceof Error ? error.message : String(error));
+  } finally {
+    input.value = '';
+  }
 }
 
 function removeAttachment(index: number) {
   if (!draft.value?.attachments) return;
+  const attachment = draft.value.attachments[index];
+  if (!attachment) return;
   draft.value.attachments.splice(index, 1);
+  if (normalizePortableAttachmentPath(attachment.path))
+    draft.value.body = removeAttachmentMarkdown(draft.value.body, attachment);
 }
 
 async function importMarkdown(event: Event) {
@@ -339,6 +387,23 @@ function onPreviewClick(event: MouseEvent) {
   const anchor = (event.target as HTMLElement).closest('a');
   if (!anchor) return;
   const href = anchor.getAttribute('href') || '';
+  if (href.startsWith('#attachment:')) {
+    event.preventDefault();
+    let path: string | null;
+    try {
+      path = normalizePortableAttachmentPath(
+        decodeURIComponent(href.slice('#attachment:'.length)),
+      );
+    } catch {
+      path = null;
+    }
+    const attachment = draft.value?.attachments?.find(
+      (candidate) => normalizePortableAttachmentPath(candidate.path) === path,
+    );
+    if (attachment) openAttachment(attachment);
+    else app.notify('该附件未在当前笔记的附件清单中声明。');
+    return;
+  }
   if (!href.startsWith('#wikilink:')) return;
   event.preventDefault();
   const title = decodeURIComponent(href.slice('#wikilink:'.length));
@@ -443,13 +508,16 @@ function openWikiLink(title: string) {
               v-for="tag in app.tags"
               :key="tag.id"
               type="button"
-              :class="{ 'is-active': tagFilter === tag.id }"
-              @click="tagFilter = tagFilter === tag.id ? '' : tag.id"
+              :class="{ 'is-active': tagFilters.includes(tag.id) }"
+              @click="toggleTagFilter(tag.id)"
             >
               <span :style="{ background: tag.color }"></span>{{ tag.name }}
             </button>
           </div>
           <span v-else class="muted">尚无标签</span>
+          <label v-if="tagFilters.length > 1" class="checkbox-line tag-match-mode">
+            <input v-model="matchAllTags" type="checkbox" />必须同时匹配所有已选标签
+          </label>
         </div>
         <button class="button button--ghost button--small button--wide explorer-import" type="button" @click="markdownInput?.click()">
           <FileDown :size="15" />导入 Markdown
@@ -491,7 +559,7 @@ function openWikiLink(title: string) {
           title="没有匹配笔记"
           description="清除搜索、文件夹或标签筛选后再试。"
           action-label="清除筛选"
-          @action="query = ''; folderFilter = ''; tagFilter = ''"
+          @action="query = ''; folderFilter = ''; tagFilters = []; matchAllTags = false"
         />
       </section>
 
@@ -507,7 +575,7 @@ function openWikiLink(title: string) {
             <button type="button" :class="{ 'is-active': mode === 'source' }" @click="mode = 'source'">源码</button>
             <button type="button" :class="{ 'is-active': mode === 'preview' }" @click="mode = 'preview'">预览</button>
           </div>
-          <button class="icon-button icon-button--small" type="button" aria-label="导出 Markdown" @click="app.exportNote(draft)"><Download :size="16" /></button>
+          <button class="icon-button icon-button--small" type="button" aria-label="导出笔记" @click="app.exportNote(draft)"><Download :size="16" /></button>
           <button class="icon-button icon-button--small danger" type="button" aria-label="删除笔记" @click="deleteOpen = true"><Trash2 :size="16" /></button>
         </header>
 
@@ -540,6 +608,7 @@ function openWikiLink(title: string) {
         <div class="note-editor__workspace">
           <div v-show="mode === 'source'" class="markdown-pane">
             <textarea
+              ref="bodyInput"
               v-model="draft.body"
               class="markdown-editor"
               aria-label="Markdown 正文"
@@ -558,7 +627,7 @@ function openWikiLink(title: string) {
 
         <footer class="note-editor__footer">
           <div class="note-editor__tools">
-            <button type="button" @click="attachmentInput?.click()"><Paperclip :size="15" />附件</button>
+            <button type="button" @click="chooseAttachment"><Paperclip :size="15" />附件</button>
             <button type="button" @click="templateOpen = true"><Sparkles :size="15" />模板</button>
             <span v-if="wikiLinks.length"><Link2 :size="14" />{{ wikiLinks.length }} 个链接</span>
           </div>
@@ -572,7 +641,7 @@ function openWikiLink(title: string) {
             <Paperclip :size="15" /><strong>附件</strong>
           </div>
           <div v-for="(attachment, index) in draft.attachments" :key="`${attachment.path}-${index}`" class="attachment-row">
-            <button type="button" @click="openAttachment(attachment.name, attachment.path, attachment.data)">
+            <button type="button" @click="openAttachment(attachment)">
               <FileText :size="15" />
               <span>{{ attachment.name }}</span>
               <small>{{ attachment.path }}</small>
@@ -830,6 +899,12 @@ function openWikiLink(title: string) {
 .explorer-tag-list button.is-active {
   color: var(--accent-strong);
   background: var(--accent-soft);
+}
+
+.tag-match-mode {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  line-height: 1.45;
 }
 
 .explorer-tag-list span,

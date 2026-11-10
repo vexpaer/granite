@@ -201,11 +201,12 @@ function errorStatus(error: unknown): number | undefined {
 
 function providerProfileCopy(profile: ProviderProfile): Readonly<ProviderProfile> {
   if (!profile.id) throw new ProviderError('provider profile id is required')
-  if (profile.type !== 'webdav' && profile.type !== 's3') {
+  if (profile.type !== 'webdav' && profile.type !== 's3' && profile.type !== 'local') {
     throw new ProviderError(`unsupported provider type: ${String(profile.type)}`)
   }
   if (!profile.endpoint) throw new ProviderError('provider endpoint is required')
-  if (!profile.credentialId) throw new ProviderError('provider credentialId is required')
+  if (profile.type !== 'local' && !profile.credentialId) throw new ProviderError('provider credentialId is required')
+  if (profile.type !== 'local') {
   let endpoint: URL
   try {
     endpoint = new URL(profile.endpoint)
@@ -217,6 +218,7 @@ function providerProfileCopy(profile: ProviderProfile): Readonly<ProviderProfile
   }
   if (endpoint.username || endpoint.password) {
     throw new ProviderError('provider endpoint cannot contain embedded credentials')
+  }
   }
   if (typeof profile.prefix !== 'string') {
     throw new ProviderError('provider prefix must be a string')
@@ -331,7 +333,7 @@ export function createHostProviderTransport(
             args: {
               // BoundProvider keys already include the normalized profile
               // prefix. The native host must only apply the endpoint/bucket.
-              profile: { ...request.profile, prefix: '' },
+              profile: { ...request.profile, prefix: request.profile.type === 'local' ? request.profile.prefix : '' },
               method: request.method,
               key: request.key,
               ...(request.body ? { body: [...request.body] } : {}),
@@ -908,7 +910,42 @@ export function createProvider(
   transport: NativeProviderTransport,
   options: WebDavProviderOptions & S3ProviderOptions = {},
 ): StorageProvider {
+  if (profile.type === 'local') return new LocalFilesystemProvider(profile, transport, options)
   return profile.type === 'webdav'
     ? createWebDavProvider(profile, transport, options)
     : createS3Provider(profile, transport, options)
+}
+
+/** A user-granted native directory; it shares the cloud providers' contract. */
+export class LocalFilesystemProvider extends BoundProvider {
+  constructor(profile: ProviderProfile, transport: NativeProviderTransport, options: WebDavProviderOptions = {}) {
+    super(profile, transport, options.digest ?? sha256Hex, options.sleep ?? defaultSleep)
+    if (!profile.root || !profile.prefix.trim() || profile.prefix.split(/[\\/]/).some(part => part === '..' || part === '.')) {
+      throw new TypeError('local provider requires a granted root and dedicated relative prefix')
+    }
+  }
+
+  async capabilities(): Promise<ProviderCapabilities> {
+    return { conditionalWrite: true, rangeRead: true, serverChecksums: true, move: false, versioning: false, multipartUpload: false, etag: true }
+  }
+
+  async list(prefix = '', options: ProviderRequestOptions = {}): Promise<ProviderObject[]> {
+    const response = await this.request('LIST', prefix, options)
+    const objects: ProviderObject[] = JSON.parse(new TextDecoder().decode(toBytes(response.body)))
+    if (!Array.isArray(objects) || objects.some(item => !item || typeof item.key !== 'string')) {
+      throw new ProviderError('local provider returned an invalid directory listing', { code: 'INVALID_RESPONSE' })
+    }
+    return objects.map(item => ({ ...item, key: this.stripProviderPrefix(item.key) })).sort((a, b) => a.key.localeCompare(b.key))
+  }
+
+  async stat(key: string, options: ProviderRequestOptions = {}): Promise<ProviderStat | undefined> {
+    try {
+      const response = await this.request('HEAD', key, options)
+      const size = responseHeader(response.headers, 'content-length')
+      return { key, ...(size !== undefined ? { size: Number(size) } : {}), etag: responseHeader(response.headers, 'etag'), lastModified: responseHeader(response.headers, 'last-modified') }
+    } catch (error) {
+      if (error instanceof ProviderError && error.status === 404) return undefined
+      throw error
+    }
+  }
 }

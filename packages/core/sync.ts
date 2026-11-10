@@ -240,7 +240,13 @@ function cloneJsonValue<T>(value: T): T {
     return value
   }
   if (typeof globalThis.structuredClone === 'function') {
-    return globalThis.structuredClone(value)
+    try {
+      return globalThis.structuredClone(value)
+    } catch (error) {
+      // Domain records may arrive through a reactive proxy. They remain JSON
+      // data, but structuredClone rejects proxies even when every field is safe.
+      if (!(error instanceof Error) || error.name !== 'DataCloneError') throw error
+    }
   }
   return JSON.parse(JSON.stringify(value)) as T
 }

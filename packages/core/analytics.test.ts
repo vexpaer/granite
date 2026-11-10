@@ -26,6 +26,13 @@ function session(
 }
 
 describe('reading analytics', () => {
+  it('accepts proxied persisted sessions after returning from the reader', () => {
+    const source = session('proxy-session', '2026-11-09T10:00:00Z', '2026-11-09T10:10:00Z', 600_000);
+    const proxy = new Proxy(source, {});
+    expect(aggregateReadingByDate([proxy], { timeZone: 'UTC' })[0]?.activeMs).toBe(600_000);
+    expect(summarizeReadingSessions([proxy], { timeZone: 'UTC' }).totalActiveMs).toBe(600_000);
+    expect(source.activeMs).toBe(600_000);
+  });
   it('deduplicates sessions and splits active time across local dates', () => {
     const crossingMidnight = session(
       'session-crossing',

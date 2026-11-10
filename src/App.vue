@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   computed,
+  defineAsyncComponent,
+  h,
   onBeforeUnmount,
   onMounted,
   reactive,
@@ -37,7 +39,6 @@ import SearchView from './views/SearchView.vue';
 import ImportView from './views/ImportView.vue';
 import ConflictsView from './views/ConflictsView.vue';
 import DiagnosticsView from './views/DiagnosticsView.vue';
-import ReaderView from './views/ReaderView.vue';
 import PluginSlots from './components/PluginSlots.vue';
 import PluginSurface from './components/PluginSurface.vue';
 import type { PluginUiEntry } from './services/plugin-manager';
@@ -46,6 +47,15 @@ import './styles/global.css';
 import './styles/app.css';
 
 const app = useApp();
+const ReaderView = defineAsyncComponent({
+  loader: () => import('./views/ReaderView.vue'),
+  loadingComponent: () => h('div', { class: 'app-loading', role: 'status' }, '正在加载阅读器…'),
+  errorComponent: () => h('div', { class: 'app-loading', role: 'alert' }, [
+    h('span', '阅读器加载失败，请重新打开书籍。'),
+    h('button', { class: 'button button--secondary', onClick: () => app.back() }, '返回'),
+  ]),
+  timeout: 30000,
+});
 const viewport = reactive({ width: window.innerWidth, height: window.innerHeight });
 const searchInput = ref<HTMLInputElement>();
 const searchText = ref(String(app.search || ''));
