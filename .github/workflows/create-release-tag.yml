@@ -1,0 +1,50 @@
+name: Create version tag
+
+on:
+  push:
+    branches:
+      - "publish/v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: create-release-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-tag:
+    name: Create release tag from publish branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#publish/}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a branch named publish/vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+          expected_version="${tag#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ "$package_version" != "$expected_version" ]]; then
+            echo "Branch tag $tag does not match package version $package_version." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push annotated tag
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Granite $RELEASE_TAG"
+          git push origin "$RELEASE_TAG"
