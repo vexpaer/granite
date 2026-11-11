@@ -8,7 +8,7 @@
 - [Android ARM64 APK](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-v0.1.0-aarch64.apk)（22.97 MB，发布密钥签名，Android 7.0 / API 24 起）
 - [发布说明](https://github.com/vexpaer/granite/releases/tag/v0.1.0) · [SHA-256 校验清单](https://github.com/vexpaer/granite/releases/download/v0.1.0/SHA256SUMS)
 
-首版包含 EPUB/PDF/TXT/MOBI 阅读、PDF 标注直接写回、多书库、Markdown 笔记与附件、标签、统计、备份、WebDAV/S3 同步和 Cordis 插件。自动化检查与产物校验已通过；实机运行与真实云端测试按用户要求交由交付后手测，尚未验证。完整缓冲操作上限为 512 MiB，详见[验收记录](docs/acceptance.md)和[手测清单](docs/user-manual-checklist.md)。
+首版包含 EPUB/PDF/TXT/MOBI 阅读、PDF 标注直接写回、多书库、Markdown 笔记与附件、标签、统计、备份、WebDAV/S3 同步和 Cordis 插件。自动化检查与产物校验已通过；实机运行与真实云端测试按当前 U3 要求豁免，尚未验证，也不要求手动补测。完整缓冲操作上限为 512 MiB，详见[验收记录](docs/acceptance.md)。
 
 ## 开发与构建（仅 GitHub Actions）
 

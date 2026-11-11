@@ -4,6 +4,8 @@ Updated 2026-11-11 (Asia/Shanghai). Authority: [Granite 规格书](../granite%20
 
 All future installation, builds and minimal tests run only in GitHub-hosted Actions, as described in [ci.md](ci.md). Tests GitHub cannot perform are **WAIVED / NOT VERIFIED**, with no local/manual follow-up requirement. No browser/device/live-cloud matrix is required. Historical local and browser results below remain evidence of v0.1.0 only, not future execution requirements. Emulators remain prohibited; known data-safety, startup or core-reading faults still block publication.
 
+## Historical v0.1.0 delivery evidence
+
 | Criterion | State and evidence |
 | --- | --- |
 | Core implementation and frontend checks | `npm run check` passed: 130 tests in 21 files, typecheck and production build. Covers library identity/unlink/deletion safety, backup recovery, tags, notebook assets, providers, sync, plugin boundaries, geometry and formats. |
@@ -14,10 +16,10 @@ All future installation, builds and minimal tests run only in GitHub-hosted Acti
 | Android CI deliverable | Integrated Debug CI [42765264307](https://github.com/vexpaer/granite/actions/runs/42765264307) and signed Release CI [42766136682](https://github.com/vexpaer/granite/actions/runs/42766136682) passed for source `e8070f1`. Downloaded Debug and Release APKs match their checksums; package, ARM64 ABI, manifest and signatures verified. |
 | GitHub publication | [v0.1.0](https://github.com/vexpaer/granite/releases/tag/v0.1.0) published with the Windows installer, signed Android APK and aggregate `SHA256SUMS`. Release APK: 22,971,439 bytes, SHA-256 `3ed49d4761613ca9b3b588798cf29f0f7dfcf80687dd5d43918de2940197499d`. |
 | Data safety, startup and reading | Known faults must be fixed before publication. See [release audit](release-audit.md) for resolved findings and remaining build gates. |
-| Windows and Android actual-device application behavior | USER MANUAL / NOT VERIFIED under U2. Includes installation, reading, restart, window/input/lifecycle behavior and platform directory access. |
-| Real S3/WebDAV and another-device synchronization | USER MANUAL / NOT VERIFIED under U2. Local test transports do not substitute for this user check. |
+| Windows and Android actual-device application behavior | WAIVED / NOT VERIFIED under U3; no required manual follow-up. Includes installation, reading, restart, window/input/lifecycle behavior and platform directory access. |
+| Real S3/WebDAV and another-device synchronization | WAIVED / NOT VERIFIED under U3; no required manual follow-up. Local test transports do not prove live cloud behavior. |
 
-The first release is complete for this revised delivery scope: required automated/native/CI checks, artifact inspection and GitHub publication are recorded. The user's manual checklist is specification section 10-A.6 and [user-manual-checklist.md](user-manual-checklist.md). Test commands and the distinction between historical and final artifacts are in [test-evidence.md](test-evidence.md). Completion of this delivery does not claim the deferred manual checks passed.
+The first release was delivered with the recorded automated/native/CI checks, artifact inspection and GitHub publication. U3 removes the old required manual checklist; it remains historical reference only. Test commands and the distinction between historical and final artifacts are in [test-evidence.md](test-evidence.md). Delivery does not claim the waived checks passed.
 
 ## Implementation and evidence index
 
