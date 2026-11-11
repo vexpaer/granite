@@ -171,3 +171,18 @@ Physical Android-device verification is explicitly waived by the user on
 2026-11-09. This document describes the implemented responsive design contract and
 does not claim that runtime Android appearance was observed. Android CI and APK
 artifact verification remain required. Emulator-based evidence is prohibited.
+
+
+## Android phone portrait
+
+Phone portrait is a first-class layout with its own compact type scale, spacing,
+and page composition. The utility bar contains actions only; page views own the
+single visible title. The five-item bottom navigation respects Android safe
+areas. Home, Library, Notebook, Statistics, and My use phone-sized card and
+content layouts; Notebook is a single-pane list/editor flow. Desktop and Android
+landscape retain their existing sidebar and wide-workspace composition.
+
+Bulk book imports read, verify, and persist one selected file at a time. The
+import screen keeps the complete selection but bounds visible file/result rows,
+so large selections do not create a huge WebView DOM or hold every file's bytes
+in memory simultaneously.
