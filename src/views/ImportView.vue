@@ -39,9 +39,10 @@ const resultCounts = computed(() => {
 const visibleResults = computed(() => {
   const entries = app.importResults.map((result, index) => ({ result, index }));
   const failures = entries.filter(({ result }) => result.status === 'error').slice(0, RESULT_PREVIEW_LIMIT);
-  const recent = entries
-    .filter(({ result }) => result.status !== 'error')
-    .slice(-Math.max(0, RESULT_PREVIEW_LIMIT - failures.length));
+  const remaining = Math.max(0, RESULT_PREVIEW_LIMIT - failures.length);
+  const recent = remaining
+    ? entries.filter(({ result }) => result.status !== 'error').slice(-remaining)
+    : [];
   return [...failures, ...recent];
 });
 const resultHiddenCount = computed(() => Math.max(0, app.importResults.length - visibleResults.value.length));

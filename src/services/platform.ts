@@ -61,7 +61,7 @@ export async function initializePlatform(app: PlatformApp) {
       for (const file of files) {
         let payload: { id: string; name: string; bytes: number[] };
         try {
-          payload = await hostCall("share.read", { id: file.id });
+          payload = await hostCall<{ id: string; name: string; bytes: number[] }>("share.read", { id: file.id });
         } catch (error) {
           interrupted = String(error);
           break;
