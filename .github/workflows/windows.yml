@@ -158,6 +158,9 @@ jobs:
         shell: pwsh
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
