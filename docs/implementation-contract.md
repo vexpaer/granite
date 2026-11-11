@@ -13,7 +13,10 @@ One Tauri command `host_call`, argument `{request:{op:string,args:object}}`, ret
 - root.pick => LibraryRoot|null via native chooser (Android SAF tree); root.scan {root} => array `{name,relativePath,size,format}`; root.validate {root}=> updated root. root.migrate {from,to}=> report; never delete originals.
 - book.import {rootId,root,filename,bytes:number[]} => `{relativePath,sha256,size}` (safe unique file, verifies hash); book.read {root,relativePath}=>number[]; book.write {root,relativePath,bytes:number[],expectedSha256:string}=>{sha256,size} (source precondition, backup, atomic verify); book.export {filename,bytes}=>bool; book.locate {root,relativePath}=>bool.
 - book.stat {root,relativePath}=>`{size,sha256?}`; book.readRange {root,relativePath,offset,length}=>number[], at most 4 MiB per call. Native PDF begins with 64 KiB and uses PDF.js range requests. Other parsers receive the assembled input with a 512 MiB full-buffer limit.
-- file.pickBooks => array `{name,bytes:number[]}` using native picker.
+- file.pickBooks => Android array `{id,name,size}`; read one selected item with
+  `file.readPickedBook {id}` => `{name,bytes:number[]}`, then release unread
+  handles with `file.releasePickedBooks {ids}`. Windows may return
+  `{name,bytes:number[]}`; all UI import paths process files sequentially.
 - credential.set {id,secret} => true; credential.delete {id} => true. Never expose credential.get to web UI/plugins.
 - provider.request {profile,method,key,body?:number[],headers?:object} => `{status,headers,body:number[]}`. Native resolves profile credentialId, signs S3 or WebDAV Basic, TLS. Credentials never persisted in AppSettings.
 - Local Filesystem uses the same operation with `profile.type="local"`, `profile.root` holding the user-selected directory, and a nonempty dedicated `profile.prefix`. Keys already include that prefix; native code validates the boundary without adding it twice. Methods are `LIST` (JSON `ProviderObject[]` in response bytes), `GET`, `HEAD`, `PUT`, and `DELETE`, with range and conditional headers. No credential lookup occurs. Device-local root paths are excluded from sync and backups.

@@ -346,10 +346,6 @@
   transform: translateY(8px);
 }
 
-.android-page-title {
-  display: none;
-}
-
 @media (max-width: 760px) {
   .app-content {
     padding: 0.85rem;
@@ -373,14 +369,6 @@
 
   .app-frame--android-portrait .app-utility-bar {
     gap: 0.35rem;
-  }
-
-  .app-frame--android-portrait .android-page-title {
-    display: block;
-    flex: 0 0 auto;
-    font-family: var(--font-display);
-    font-size: 1.35rem;
-    font-weight: 600;
   }
 
   .app-frame--android-portrait .global-search {
@@ -441,3 +429,384 @@
   }
 }
 
+
+
+/* Android phone portrait is composed for a narrow reading surface, not scaled from landscape. */
+.app-frame--android-portrait .app-content {
+  padding: 0.8rem 0.9rem 1rem;
+}
+
+.app-frame--android-portrait .app-utility-bar {
+  min-height: 52px;
+  gap: 0.3rem;
+  padding: max(0.35rem, env(safe-area-inset-top)) 0.8rem 0.35rem;
+}
+
+.app-frame--android-portrait .global-search {
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  flex: 0 0 38px;
+  justify-content: center;
+  padding: 0;
+  margin-left: auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-frame--android-portrait .global-search:focus-within {
+  position: absolute;
+  z-index: 2;
+  right: 0.8rem;
+  left: 0.8rem;
+  width: auto;
+  min-width: 0;
+  padding: 0 0.65rem;
+  border-color: var(--border);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+}
+
+.app-frame--android-portrait .sync-indicator {
+  width: 36px;
+  height: 36px;
+  margin-left: 0;
+}
+
+.app-frame--android-portrait .app-header-plugin-slot {
+  gap: 0.25rem;
+}
+
+.app-frame--android-portrait .page-view {
+  gap: 0.8rem;
+  padding-bottom: 1rem;
+}
+
+.app-frame--android-portrait .page-header {
+  gap: 0.55rem;
+}
+
+.app-frame--android-portrait .page-header__copy h1 {
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.app-frame--android-portrait .page-header__copy p {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.app-frame--android-portrait .page-header__actions {
+  gap: 0.4rem;
+}
+
+.app-frame--android-portrait .page-header__actions .button {
+  min-height: 36px;
+  padding: 0.42rem 0.62rem;
+  font-size: 0.76rem;
+}
+
+.app-frame--android-portrait .surface-card {
+  border-radius: var(--radius-lg);
+}
+
+.app-frame--android-portrait .section-card {
+  padding: 0.9rem;
+}
+
+.app-frame--android-portrait .section-heading {
+  gap: 0.5rem;
+  margin-bottom: 0.7rem;
+}
+
+.app-frame--android-portrait .section-heading h2 {
+  font-size: 0.92rem;
+}
+
+/* Home: compact greeting, one-column task flow, and a smaller continue-reading card. */
+.app-frame--android-portrait .home-hero {
+  min-height: 150px;
+  padding: 1.1rem;
+  border-radius: 18px;
+}
+
+.app-frame--android-portrait .home-hero h1 {
+  font-size: clamp(1.9rem, 7vw, 2.2rem);
+}
+
+.app-frame--android-portrait .home-hero p {
+  max-width: 26ch;
+  font-size: 0.8rem;
+}
+
+.app-frame--android-portrait .home-first-run {
+  min-height: 0;
+  padding: 1.1rem;
+}
+
+.app-frame--android-portrait .home-first-run__copy h2 {
+  font-size: 1.45rem;
+}
+
+.app-frame--android-portrait .home-layout {
+  gap: 0.75rem;
+}
+
+.app-frame--android-portrait .continue-card,
+.app-frame--android-portrait .recent-books-card,
+.app-frame--android-portrait .notes-card,
+.app-frame--android-portrait .stats-mini,
+.app-frame--android-portrait .goal-card {
+  padding: 0.9rem;
+}
+
+.app-frame--android-portrait .continue-card__body {
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.app-frame--android-portrait .continue-card__cover {
+  width: 64px;
+}
+
+.app-frame--android-portrait .continue-card__title {
+  font-size: 1.2rem;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.app-frame--android-portrait .recent-books {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+/* Library: preserve the virtualized grid while keeping filters horizontally reachable. */
+.app-frame--android-portrait .library-toolbar {
+  padding: 0.75rem;
+}
+
+.app-frame--android-portrait .status-tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+
+.app-frame--android-portrait .status-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.app-frame--android-portrait .status-tabs button {
+  min-height: 32px;
+  padding: 0.35rem 0.55rem;
+  white-space: nowrap;
+}
+
+.app-frame--android-portrait .library-toolbar__actions {
+  gap: 0.35rem;
+  overflow-x: auto;
+}
+
+.app-frame--android-portrait .library-virtual-viewport {
+  height: clamp(320px, calc(100dvh - 290px), 760px);
+}
+
+/* Notebook: one-pane list/editor flow; no compressed multi-column desktop workspace. */
+.app-frame--android-portrait .notebook-view {
+  gap: 0.7rem;
+}
+
+.app-frame--android-portrait .notebook-shell {
+  border-radius: 16px;
+}
+
+.app-frame--android-portrait .note-list {
+  min-height: 420px;
+}
+
+.app-frame--android-portrait .notebook-view--editor-open .note-editor {
+  min-height: calc(100dvh - 190px - env(safe-area-inset-bottom));
+}
+
+.app-frame--android-portrait .note-editor__meta {
+  padding: 0.75rem 0.85rem 0.55rem;
+}
+
+.app-frame--android-portrait .note-title {
+  font-size: 1.45rem;
+}
+
+.app-frame--android-portrait .note-editor__workspace,
+.app-frame--android-portrait .markdown-editor {
+  min-height: 340px;
+}
+
+.app-frame--android-portrait .markdown-editor {
+  padding: 1rem;
+}
+
+.app-frame--android-portrait .markdown-preview {
+  padding: 1rem;
+  font-size: 0.86rem;
+}
+
+/* My: compact profile and two-column status shortcuts, with no app-level Back on this tab. */
+.app-frame--android-portrait .profile-card {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.9rem;
+}
+
+.app-frame--android-portrait .profile-card__avatar {
+  width: 50px;
+  height: 50px;
+  font-size: 1.2rem;
+}
+
+.app-frame--android-portrait .profile-card h1 {
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.app-frame--android-portrait .profile-card p {
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.app-frame--android-portrait .profile-card > .button {
+  width: auto;
+  min-height: 34px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.72rem;
+}
+
+.app-frame--android-portrait .me-status-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.app-frame--android-portrait .me-status {
+  gap: 0.45rem;
+  padding: 0.65rem;
+}
+
+.app-frame--android-portrait .me-status > span {
+  font-size: 0.67rem;
+  line-height: 1.3;
+}
+
+.app-frame--android-portrait .me-status strong {
+  font-size: 0.73rem;
+}
+
+.app-frame--android-portrait .me-group {
+  padding: 0.7rem;
+}
+
+.app-frame--android-portrait .me-group__items button {
+  min-height: 52px;
+  gap: 0.55rem;
+  padding: 0.45rem;
+}
+
+.app-frame--android-portrait .me-group__icon {
+  width: 32px;
+  height: 32px;
+}
+
+.app-frame--android-portrait .me-group__copy strong {
+  font-size: 0.75rem;
+}
+
+.app-frame--android-portrait .me-group__copy span {
+  font-size: 0.68rem;
+}
+
+/* Detail and import screens keep their primary content above the five-item bottom bar. */
+.app-frame--android-portrait .detail-hero {
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 0.8rem;
+  padding: 0.85rem;
+}
+
+.app-frame--android-portrait .detail-hero__cover {
+  width: 90px;
+}
+
+.app-frame--android-portrait .detail-hero h1 {
+  font-size: 1.5rem;
+  line-height: 1.15;
+}
+
+.app-frame--android-portrait .detail-hero__authors {
+  font-size: 0.8rem;
+}
+
+.app-frame--android-portrait .import-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.app-frame--android-portrait .import-steps div {
+  min-width: 0;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.45rem 0.35rem;
+}
+
+.app-frame--android-portrait .import-steps strong {
+  font-size: 0.65rem;
+  line-height: 1.2;
+}
+
+.app-frame--android-portrait .drop-zone {
+  min-height: 150px;
+  padding: 1rem;
+}
+
+.app-frame--android-portrait .drop-zone h2 {
+  font-size: 1.25rem;
+}
+
+.app-frame--android-portrait .import-progress {
+  gap: 0.65rem;
+  padding: 0.65rem;
+}
+
+.app-frame--android-portrait .import-progress svg {
+  width: 72px;
+  height: 72px;
+}
+
+.app-frame--android-portrait .settings-content {
+  min-height: 0;
+  padding: 0.9rem;
+}
+
+.app-frame--android-portrait .settings-nav {
+  gap: 0.25rem;
+  padding: 0.35rem;
+}
+
+.app-frame--android-portrait .settings-nav button {
+  min-height: 34px;
+  padding: 0.35rem 0.5rem;
+}
+
+.app-frame--android-portrait .android-nav {
+  height: calc(60px + env(safe-area-inset-bottom));
+  padding: 0.25rem 0.35rem env(safe-area-inset-bottom);
+}
+
+.app-frame--android-portrait .android-nav button {
+  min-height: 50px;
+  gap: 0.12rem;
+  font-size: 0.72rem;
+}

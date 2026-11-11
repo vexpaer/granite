@@ -453,6 +453,24 @@ internal class SafFileSystem(private val context: Context) {
         }
     }
 
+    fun sizeUri(uri: Uri): Long {
+        resolver.query(
+            uri,
+            arrayOf(OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (index >= 0 && !cursor.isNull(index)) {
+                    return cursor.getLong(index).coerceAtLeast(0L)
+                }
+            }
+        }
+        return DocumentFile.fromSingleUri(context, uri)?.length()?.coerceAtLeast(0L) ?: 0L
+    }
+
     fun displayName(uri: Uri): String? {
         resolver.query(
             uri,

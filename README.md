@@ -8,7 +8,7 @@
 
 <p>
   <a href="LICENSE"><img alt="许可证 AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-blue"></a>
-  <a href="https://github.com/vexpaer/granite/releases/tag/v0.1.0"><img alt="版本 v0.1.0" src="https://img.shields.io/github/v/release/vexpaer/granite?label=release"></a>
+  <a href="https://github.com/vexpaer/granite/releases/tag/v0.1.1"><img alt="版本 v0.1.1" src="https://img.shields.io/github/v/release/vexpaer/granite?label=release"></a>
   <a href="https://github.com/vexpaer/granite/actions/workflows/windows.yml"><img alt="Windows 构建" src="https://github.com/vexpaer/granite/actions/workflows/windows.yml/badge.svg"></a>
   <a href="https://github.com/vexpaer/granite/actions/workflows/android.yml"><img alt="Android 构建" src="https://github.com/vexpaer/granite/actions/workflows/android.yml/badge.svg"></a>
 </p>
@@ -39,7 +39,8 @@ Granite 是电子书阅读器和个人书库。书籍、标注、笔记、进度
 - 统计、日历、连续阅读和目标由真实阅读会话计算。
 - 可以导出备份。同步可选，一次使用一个 WebDAV 或 S3 兼容配置；密钥写入系统凭据存储。
 - Cordis 插件可从本地包或明确的 HTTPS 地址安装。安装前展示来源、作者、版本、许可证、完整性、兼容性与权限，确认后默认关闭。
-- Windows 使用侧栏；Android 竖屏使用底部导航，横屏使用侧栏。阅读时导航让出整个画面。
+- Windows 使用侧栏；Android 手机竖屏采用独立紧凑布局和底部五栏导航，横屏使用左侧导航栏。阅读时导航让出整个画面。
+- Android 批量导入逐本读取和保存，导入列表限制预览行数，避免大量文件同时占用 WebView 内存。
 
 <p align="center">
   <img src="artifacts/screenshots/home-empty.png" width="860" alt="Granite 首页：空书库时的导入入口，以及继续阅读、最近阅读等模块">
@@ -53,14 +54,14 @@ Granite 是电子书阅读器和个人书库。书籍、标注、笔记、进度
 
 ## 下载
 
-当前发布为 [v0.1.0](https://github.com/vexpaer/granite/releases/tag/v0.1.0)。
+当前发布为 [v0.1.1](https://github.com/vexpaer/granite/releases/tag/v0.1.1)。
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| Windows x64 | [Granite-0.1.0-windows-x64-setup.exe](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-0.1.0-windows-x64-setup.exe) | 8.04 MB，NSIS，未做代码签名，需要 WebView2 |
-| Android ARM64 | [Granite-v0.1.0-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-v0.1.0-aarch64.apk) | 22.97 MB，发布密钥签名，Android 7.0（API 24）起 |
+| Windows x64 | [Granite-v0.1.1-windows-x64-setup.exe](https://github.com/vexpaer/granite/releases/download/v0.1.1/Granite-v0.1.1-windows-x64-setup.exe) | NSIS，未做代码签名，需要 WebView2 |
+| Android ARM64 | [Granite-v0.1.1-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.1/Granite-v0.1.1-aarch64.apk) | 发布密钥签名，Android 7.0（API 24）起 |
 
-校验和见 [SHA256SUMS](https://github.com/vexpaer/granite/releases/download/v0.1.0/SHA256SUMS)。
+校验和见 [Android SHA256SUMS.android](https://github.com/vexpaer/granite/releases/download/v0.1.1/SHA256SUMS.android) 和 [Windows SHA256SUMS.windows](https://github.com/vexpaer/granite/releases/download/v0.1.1/SHA256SUMS.windows)。
 
 安装包由 GitHub Actions 完成类型检查、单元测试、原生检查、打包和校验和核验。实机运行与真实云端同步不在这套自动化里，记录为未验证。见 [CI 流程](docs/ci.md)。
 

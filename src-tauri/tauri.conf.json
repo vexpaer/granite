@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Granite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "app.granite.reader",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -28,6 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "android": {
+      "versionCode": 1001
+    },
     "category": "Productivity",
     "shortDescription": "A local-first, plugin-first ebook reader",
     "longDescription": "Granite is a local-first ebook reader and personal library with native Windows and Android file access.",

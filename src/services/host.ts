@@ -39,7 +39,11 @@ export async function localDelete(key: string) {
   });
 }
 export async function sha256(bytes: Uint8Array) {
-  const hash = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+  const buffer =
+    bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer
+      : bytes.slice().buffer;
+  const hash = await crypto.subtle.digest("SHA-256", buffer as ArrayBuffer);
   return Array.from(new Uint8Array(hash), (x) =>
     x.toString(16).padStart(2, "0"),
   ).join("");

@@ -70,7 +70,11 @@ app-private filesystem root uses the Rust trash implementation.
 and Notebook files cannot reappear as managed books.
 
 `file.pickBooks` uses `ACTION_OPEN_DOCUMENT` with multiple selection and
-returns `{name, bytes: number[]}[]`.
+returns lightweight `{id, name, size}[]` descriptors. The selected content URIs
+remain in a short-lived native handle map. The frontend reads one item at a time
+with `file.readPickedBook {id}` => `{name, bytes: number[]}`, then calls
+`file.releasePickedBooks {ids}` to discard any unread handles. This prevents a
+large multi-selection from being copied into WebView memory at once.
 
 Imported books are copied into the managed layout
 `books/<canonical UUID>/<supported filename>` and `book.import` returns that
@@ -171,9 +175,11 @@ private inbox and records size and SHA-256. A cold-start or single-task
 
 Share import is two-phase:
 
-1. `share.consume` returns `{id, name, bytes: number[]}[]` and changes no inbox
-   state.
-2. After the importer finishes, call `share.ack` with only IDs whose result is
+1. `share.consume` returns lightweight `{id, name, size}[]` metadata and
+   changes no inbox state.
+2. Read and verify one cached item at a time with `share.read {id}`, which
+   returns `{id, name, bytes: number[]}`.
+3. After each importer result, call `share.ack` only for IDs whose result is
    successful or a detected duplicate:
 
 ```ts

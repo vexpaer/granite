@@ -92,19 +92,37 @@ internal class ShareInbox(private val context: Context) {
             if (!file.isFile) {
                 throw BridgeFailure("A shared book is no longer available")
             }
-            val bytes = file.readBytes()
-            val expectedHash = record.optString("sha256")
-            if (sha256(bytes) != expectedHash) {
-                throw BridgeFailure("A shared book failed integrity verification")
-            }
             output.put(
                 JSObject()
                     .put("id", id)
                     .put("name", name)
-                    .put("bytes", bytesToJsArray(bytes)),
+                    .put("size", file.length()),
             )
         }
         return output
+    }
+
+    @Synchronized
+    fun read(id: String): JSObject {
+        ensureInbox()
+        val record = readIndex().firstOrNull { it.optString("id") == id }
+            ?: throw BridgeFailure("The shared book is no longer in the inbox")
+        val cacheFileName = record.optString("cacheFileName")
+        val name = record.optString("name")
+        if (cacheFileName.isBlank() || name.isBlank()) {
+            throw BridgeFailure("Android share inbox metadata is corrupt")
+        }
+        val file = File(inboxDirectory, cacheFileName)
+        if (!file.isFile) throw BridgeFailure("A shared book is no longer available")
+        val bytes = file.readBytes()
+        val expectedHash = record.optString("sha256")
+        if (bytes.size.toLong() != record.optLong("size") || sha256(bytes) != expectedHash) {
+            throw BridgeFailure("A shared book failed integrity verification")
+        }
+        return JSObject()
+            .put("id", id)
+            .put("name", name)
+            .put("bytes", bytesToJsArray(bytes))
     }
 
     @Synchronized
