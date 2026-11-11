@@ -1,6 +1,9 @@
 name: Create version tag
 
 on:
+  create:
+    branches:
+      - "publish/v*"
   push:
     branches:
       - "publish/v*"
