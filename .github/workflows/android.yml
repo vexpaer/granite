@@ -61,11 +61,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: >-
-            aarch64-linux-android,
-            armv7-linux-androideabi,
-            i686-linux-android,
-            x86_64-linux-android
+          targets: aarch64-linux-android
 
       - name: Cache Rust builds
         uses: Swatinem/rust-cache@v2
@@ -162,11 +158,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: >-
-            aarch64-linux-android,
-            armv7-linux-androideabi,
-            i686-linux-android,
-            x86_64-linux-android
+          targets: aarch64-linux-android
 
       - name: Cache Rust builds
         uses: Swatinem/rust-cache@v2
@@ -240,7 +232,7 @@ jobs:
           cp artifacts/android/release/*.txt artifacts/android/release-assets/
           (
             cd artifacts/android/release-assets
-            sha256sum "$ASSET_NAME" > SHA256SUMS
+            sha256sum "$ASSET_NAME" > SHA256SUMS.android
           )
           echo "SIGNED_APK_ASSET=$ASSET_NAME" >> "$GITHUB_ENV"
 
@@ -254,7 +246,7 @@ jobs:
             fi
             echo
             echo "- Asset: \`$SIGNED_APK_ASSET\`"
-            echo "- Checksum: \`artifacts/android/release-assets/SHA256SUMS\`"
+            echo "- Checksum: \`artifacts/android/release-assets/SHA256SUMS.android\`"
             echo "- Manifest evidence: \`artifacts/android/release-assets/apk-*-manifest.txt\`"
             echo "- Signature inspection: \`artifacts/android/release-assets/apk-inspection.txt\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -272,9 +264,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Granite ${GITHUB_REF_NAME}" --verify-tag --generate-notes || \
+            gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null
+          gh release upload "${GITHUB_REF_NAME}" \
             artifacts/android/release-assets/*.apk \
-            artifacts/android/release-assets/SHA256SUMS \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "Granite ${GITHUB_REF_NAME}" \
-            --generate-notes
+            artifacts/android/release-assets/SHA256SUMS.android \
+            --repo "${GITHUB_REPOSITORY}" --clobber

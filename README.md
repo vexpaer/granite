@@ -10,34 +10,35 @@
 
 首版包含 EPUB/PDF/TXT/MOBI 阅读、PDF 标注直接写回、多书库、Markdown 笔记与附件、标签、统计、备份、WebDAV/S3 同步和 Cordis 插件。自动化检查与产物校验已通过；实机运行与真实云端测试按用户要求交由交付后手测，尚未验证。完整缓冲操作上限为 512 MiB，详见[验收记录](docs/acceptance.md)和[手测清单](docs/user-manual-checklist.md)。
 
-## 开发
+## 开发与构建（仅 GitHub Actions）
 
 ```powershell
-$env:RUSTUP_HOME = Join-Path $PWD '.cache/rustup'
-$env:CARGO_HOME = Join-Path $PWD '.cache/cargo'
-rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
-npm ci
-npm run desktop
+git pull
+# 编辑源码后提交并推送
+git add .
+git commit -m "Describe the change"
+git push
 ```
 
-依赖安装在本目录的 `node_modules`，npm 缓存在 `.cache/npm`，Cargo 和 Rust 工具链分别位于 `.cache/cargo`、`.cache/rustup`。桌面脚本选择 MSVC，输出位于 `target/host-msvc`。Android 脚本使用 `.cache/android-toolchain` 内已有的 JDK/SDK/NDK，Gradle 缓存在 `.cache/gradle`；环境安装说明见 [Android 构建](docs/android/ci.md)。Windows 需要预先安装 Rustup、Visual Studio C++ Build Tools 和 WebView2。
+本机仅维护源码和 Git 工作副本，不安装 Node、Rust、Python、JDK、Android SDK 或浏览器测试环境。推送/PR 自动触发 [Windows](https://github.com/vexpaer/granite/actions/workflows/windows.yml) 和 [Android](https://github.com/vexpaer/granite/actions/workflows/android.yml) 检查与打包；也可在 Actions 页面点击 **Run workflow** 手动构建。安装包从运行页面的 Artifacts 下载，无需下载到开发目录。
 
 ```powershell
-npm run check
-npm run desktop:build
-npm run android:init
-npm run android:build
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-`npm run dev` 仅供界面开发预览；浏览器预览使用 IndexedDB。原生目录授权、安全凭证及云同步由 Windows/Android 宿主提供。产品运行不需要 Node.js 或本地 HTTP 服务。
+发布前先更新源码中的版本号。`v*` 标签触发两个平台的构建并上传到同一 GitHub Release，各自附带 `SHA256SUMS.windows` / `SHA256SUMS.android`。Windows 暂无代码签名，Android 使用 GitHub Secrets 内的发布密钥。
+
+测试只保留 GitHub 可执行的简单类型/单元检查、原生检查、打包与产物校验；GitHub 无法做的测试全部豁免，不安排本机或手动补测。历史实机/浏览器记录仅保留为历史证据。完整规则见 [CI 流程](docs/ci.md)。产品运行不需要 Node.js 或本地 HTTP 服务。
+
+清理旧本地环境可双击根目录的 `CLEAN-LOCAL.cmd`；脚本只删除列明的可重建项目文件，保留源码、Git 和 `private/signing`，结果写入忽略目录 `private/local-cleanup-report.json`。
 
 ## 产品与验证
 
 - 权威规格：[Granite 规格书](granite%20规格书/Granite%20规格书.md)
 - 需求追踪：[验收记录](docs/acceptance.md)
 - 架构：[架构决策](docs/architecture-decisions.md)
-- 本次用户更正：[实机与真实云端验收交由用户手测](docs/task-overrides.md)
-- 收到安装包后：[手动检查清单](docs/user-manual-checklist.md)
+- 当前用户更正：[所有构建与最简测试迁移到 GitHub](docs/task-overrides.md)
 - 所有第三方资源来源：[素材说明](public/assets/SOURCES.md)
 
 主项目 AGPL-3.0-only；第三方依赖保留各自许可证。请勿向仓库提交个人书籍、云存储密钥或 Android 签名材料。发布状态以有实际证据的验收记录为准。

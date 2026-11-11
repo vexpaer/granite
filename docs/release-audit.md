@@ -1,5 +1,7 @@
 # Granite release audit
 
+**2026-11-11 U3:** future verification/builds are GitHub-only and minimal. GitHub-incompatible tests are waived, with no local or manual follow-up requirement. Results below retain the historical v0.1.0 evidence. Current process: [ci.md](ci.md).
+
 Updated 2026-11-10 (Asia/Shanghai). The authoritative specification and user update U2 in [task-overrides.md](task-overrides.md) define this delivery.
 
 ## Current delivery gates

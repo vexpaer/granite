@@ -1,5 +1,7 @@
 # Granite Test Evidence
 
+**Current policy, 2026-11-11 U3:** all future minimal checks/builds run in GitHub-hosted Actions only. Local commands and browser results below are historical v0.1.0 evidence; do not rerun them locally. GitHub-incompatible checks are waived without mandatory manual follow-up. See [ci.md](ci.md).
+
 - **Observed:** 2026-11-10, Asia/Shanghai
 - **Integrated source:** `e8070f13008edc0a3d40df846fc77d8d2e49f9ee`. The final local checks and Windows package below were produced from this source before its integration commit; subsequent documentation updates do not change the packaged application.
 - **Host:** Windows 10 Home China build 26100, x64; PowerShell 7.

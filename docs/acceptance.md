@@ -1,8 +1,8 @@
 # Granite first-release acceptance
 
-Updated 2026-11-10 (Asia/Shanghai). Authority: [Granite 规格书](../granite%20规格书/Granite%20规格书.md), including its current user correction, and [U2](task-overrides.md).
+Updated 2026-11-11 (Asia/Shanghai). Authority: [Granite 规格书](../granite%20规格书/Granite%20规格书.md) and current user correction [U3](task-overrides.md).
 
-The user will perform all real-device and real-cloud checks after delivery. They are not current release gates and must be recorded as **USER MANUAL / NOT VERIFIED**, never as passed. Android emulators and virtual devices remain prohibited. Functional implementation, local automated tests, native compilation, CI builds, signing and artifact verification remain required.
+All future installation, builds and minimal tests run only in GitHub-hosted Actions, as described in [ci.md](ci.md). Tests GitHub cannot perform are **WAIVED / NOT VERIFIED**, with no local/manual follow-up requirement. No browser/device/live-cloud matrix is required. Historical local and browser results below remain evidence of v0.1.0 only, not future execution requirements. Emulators remain prohibited; known data-safety, startup or core-reading faults still block publication.
 
 | Criterion | State and evidence |
 | --- | --- |

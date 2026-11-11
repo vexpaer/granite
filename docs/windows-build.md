@@ -1,5 +1,7 @@
 # Granite Windows build record
 
+**2026-11-11 U3:** future Windows checks and NSIS builds run exclusively in [windows.yml](../.github/workflows/windows.yml). All local toolchain/build sections below document the historical v0.1.0 artifact only. Do not reinstall a local environment or perform local/manual tests; see [ci.md](ci.md).
+
 Status: **final v0.1.0 build and published artifact record**
 
 The final installer below is published in [Granite v0.1.0](https://github.com/vexpaer/granite/releases/tag/v0.1.0) as `Granite-0.1.0-windows-x64-setup.exe`. Its uploaded SHA-256 matches the local build. The release tag is `e8070f1`; later documentation updates record the evidence without changing application code.

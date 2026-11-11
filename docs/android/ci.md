@@ -1,5 +1,7 @@
 # Android CI and local toolchain
 
+**Current policy (2026-11-11, U3):** all builds and minimal tests run only on GitHub-hosted runners. Local toolchain sections below are historical records, not setup instructions. GitHub-incompatible device/live-cloud checks are waived with no mandatory manual follow-up. Current workflows use only the ARM64 Rust target and publish `SHA256SUMS.android`; see [ci.md](../ci.md).
+
 ## Workflow behavior
 
 `.github/workflows/android.yml` uses `ubuntu-24.04`.

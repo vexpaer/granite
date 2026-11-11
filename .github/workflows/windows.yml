@@ -1,0 +1,248 @@
+name: Windows
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: stable-x86_64-pc-windows-msvc
+
+jobs:
+  build:
+    name: Checks and unsigned NSIS x64
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate cleanup script syntax
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'scripts/clean-local.ps1'), [ref]$tokens, [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            throw ($parseErrors.Message -join [Environment]::NewLine)
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Create reader test fixtures
+        run: node scripts/create-fixtures.mjs
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Run native tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Check native code
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build unsigned NSIS x64 installer
+        run: npx tauri build --bundles nsis
+
+      - name: Prepare Windows artifact
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = $env:GITHUB_REF_NAME
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $assetName = "Granite-$tag-windows-x64-setup.exe"
+          }
+          else {
+            $version = (
+              node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version"
+            ).Trim()
+            if ([string]::IsNullOrWhiteSpace($version)) {
+              throw "package.json does not define a version."
+            }
+            $assetName = "Granite-$version-windows-x64-setup.exe"
+          }
+
+          $bundleDirectory = "src-tauri/target/release/bundle/nsis"
+          $installers = @(
+            Get-ChildItem -LiteralPath $bundleDirectory -Filter "*-setup.exe" -File
+          )
+          if ($installers.Count -ne 1) {
+            throw "Expected one NSIS installer in $bundleDirectory, found $($installers.Count)."
+          }
+
+          $source = $installers[0]
+          if ($source.Length -le 0) {
+            throw "NSIS installer is empty: $($source.FullName)"
+          }
+
+          $signatureStatus = (Get-AuthenticodeSignature -LiteralPath $source.FullName).Status.ToString()
+          if ($signatureStatus -ne "NotSigned") {
+            throw "Expected an unsigned installer, found signature status: $signatureStatus"
+          }
+
+          $artifactDirectory = "artifacts/windows"
+          New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
+          $destination = Join-Path $artifactDirectory $assetName
+          Copy-Item -LiteralPath $source.FullName -Destination $destination
+
+          $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = Join-Path $artifactDirectory "SHA256SUMS.windows"
+          "$hash  $assetName" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+
+          "WINDOWS_ASSET_NAME=$assetName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          @"
+          ### Unsigned Windows x64 installer
+
+          - Asset: ``$assetName``
+          - SHA-256: ``$hash``
+          - Signing: ``NotSigned``
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: granite-windows-x64-${{ github.sha }}
+          path: artifacts/windows/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish unsigned Windows release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: granite-windows-x64-${{ github.sha }}
+          path: release-assets
+
+      - name: Verify Windows artifact
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = @(Get-ChildItem -LiteralPath "release-assets" -Filter "*.exe" -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected one Windows installer, found $($installers.Count)."
+          }
+
+          $checksumFile = Get-Item -LiteralPath "release-assets/SHA256SUMS.windows"
+          $checksumText = (Get-Content -LiteralPath $checksumFile.FullName -Raw).Trim()
+          if (
+            $checksumText -notmatch
+            "^(?<hash>[0-9A-Fa-f]{64})\s+\*?(?<name>.+)$"
+          ) {
+            throw "Invalid Windows checksum record."
+          }
+
+          $expectedHash = $Matches.hash.ToLowerInvariant()
+          $checksumName = $Matches.name.Trim()
+          $installer = $installers[0]
+          if ($checksumName -ne $installer.Name) {
+            throw "Checksum filename mismatch: expected $checksumName, found $($installer.Name)."
+          }
+
+          $actualHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "Windows installer SHA-256 mismatch."
+          }
+
+          "RELEASE_ASSET=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_CHECKSUM=$($checksumFile.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Publish Windows assets to the tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = $env:GITHUB_REF_NAME
+          $repository = $env:GITHUB_REPOSITORY
+
+          gh release view $tag --repo $repository --json url *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release $tag does not exist; creating it."
+            gh release create $tag `
+              --repo $repository `
+              --verify-tag `
+              --title "Granite $tag (unsigned Windows x64)" `
+              --notes "Unsigned Windows x64 installer built by GitHub Actions. Android assets may be published by a separate workflow."
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Release creation did not succeed; checking for a concurrent creator."
+              gh release view $tag --repo $repository --json url *> $null
+              if ($LASTEXITCODE -ne 0) {
+                throw "GitHub Release $tag could not be viewed or created."
+              }
+            }
+          }
+
+          gh release view $tag --repo $repository --json url *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release $tag is not available."
+          }
+
+          gh release upload $tag `
+            $env:RELEASE_ASSET `
+            $env:RELEASE_CHECKSUM `
+            --repo $repository `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not upload Windows assets to GitHub Release $tag."
+          }
+
+          @"
+          ### Published unsigned Windows assets
+
+          - Tag: ``$tag``
+          - Installer: ``$(Split-Path -Leaf $env:RELEASE_ASSET)``
+          - Checksum: ``SHA256SUMS.windows``
+          - Signing: ``NotSigned``
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
