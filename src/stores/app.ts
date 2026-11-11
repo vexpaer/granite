@@ -430,65 +430,67 @@ class GraniteApp implements AppData {
     this.navigate("reader", bookId);
     this.beginSession(bookId);
   }
-  async importFiles(files?: FileList | File[]) {
-    this.cancelImport = false;
-    this.importResults = [];
-    this.importProgress = 0;
-    this.navigate("import");
-    let inputs: { name: string; bytes: Uint8Array }[] = [];
-    try {
-      if (files)
-        inputs = await Promise.all(
-          Array.from(files).map(async (f) => ({
-            name: f.name,
-            bytes: new Uint8Array(await f.arrayBuffer()),
-          })),
-        );
-      else if (nativeHost) {
-        const picked =
-          await hostCall<{ name: string; bytes: number[] }[]>("file.pickBooks");
-        inputs = (picked || []).map((p) => ({
-          name: p.name,
-          bytes: new Uint8Array(p.bytes),
-        }));
-      } else {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.multiple = true;
-        input.accept = ".epub,.pdf,.txt,.mobi";
-        input.onchange = () => void this.importFiles(input.files || undefined);
-        input.click();
-        return;
-      }
-      if (!inputs.length) return;
-      await this.importInputs(inputs);
-    } catch (e) {
-      this.fail(e);
+  private async importOneInput(
+    file: { name: string; bytes: Uint8Array },
+    root: LibraryRoot,
+  ): Promise<ImportResult> {
+    const hash = await sha256(file.bytes);
+    const duplicate = this.books.find((book) => book.sha256 === hash);
+    if (duplicate) {
+      return {
+        filename: file.name,
+        status: "duplicate",
+        bookId: duplicate.id,
+        message: "内容相同，已保留现有书籍和阅读记录。",
+      };
     }
+
+    const meta = await extractMetadata(file.name, file.bytes);
+    const saved = await hostCall<{
+      relativePath: string;
+      sha256: string;
+      size: number;
+    }>("book.import", {
+      rootId: root.id,
+      root: clone(root),
+      filename: file.name,
+      bytes: Array.from(file.bytes),
+    });
+    const at = now();
+    const book: Book = {
+      id: uid(),
+      title: file.name,
+      authors: [],
+      format: "txt",
+      ...meta,
+      ...saved,
+      rootId: root.id,
+      managed: true,
+      available: true,
+      status: "unread",
+      favorite: false,
+      tagIds: [],
+      collectionIds: [],
+      createdAt: at,
+      updatedAt: at,
+      cloudState: "local",
+    };
+    this.books.push(book);
+    await this.persist();
+    return { filename: file.name, status: "success", bookId: book.id };
   }
-  async importNativePaths(paths: string[]) {
-    this.navigate("import");
-    this.importResults = [];
-    this.importProgress = 0;
-    try {
-      const picked = await hostCall<{ name: string; bytes: number[] }[]>(
-        "file.readPaths",
-        { paths },
-      );
-      await this.importInputs(
-        picked.map((p) => ({ name: p.name, bytes: new Uint8Array(p.bytes) })),
-      );
-    } catch (e) {
-      this.fail(e);
-    }
-  }
-  async importInputs(
-    inputs: { name: string; bytes: Uint8Array }[],
+
+  private async processImportBatch(
+    count: number,
+    filenameAt: (index: number) => string,
+    readAt: (index: number) => Promise<{ name: string; bytes: Uint8Array }>,
+    shouldNotify = true,
   ): Promise<ImportResult[]> {
     const root = this.defaultRoot;
     if (!root) throw new Error("请先在设置中添加本地书库文件夹。");
     if (root.readonly || root.permission !== "granted")
       throw new Error("目标书库不可写，请重新授权或更改默认书库。");
+
     const results: ImportResult[] = [];
     const record = (result: ImportResult) => {
       this.importResults.push(result);
@@ -496,78 +498,136 @@ class GraniteApp implements AppData {
     };
     this.busy = true;
     try {
-      for (let i = 0; i < inputs.length; i++) {
-        const f = inputs[i]!;
+      for (let i = 0; i < count; i++) {
+        const filename = filenameAt(i);
         if (this.cancelImport) {
-          record({ filename: f.name, status: "cancelled" });
+          record({ filename, status: "cancelled" });
+          this.importProgress = (i + 1) / Math.max(1, count);
           continue;
         }
         try {
-          const hash = await sha256(f.bytes);
-          const duplicate = this.books.find((b) => b.sha256 === hash);
-          if (duplicate) {
-            record({
-              filename: f.name,
-              status: "duplicate",
-              bookId: duplicate.id,
-              message: "内容相同，已保留现有书籍和阅读记录。",
-            });
-            continue;
-          }
-          const meta = await extractMetadata(f.name, f.bytes);
-          const saved = await hostCall<{
-            relativePath: string;
-            sha256: string;
-            size: number;
-          }>("book.import", {
-            rootId: root.id,
-            root: clone(root),
-            filename: f.name,
-            bytes: Array.from(f.bytes),
-          });
-          const at = now();
-          const book: Book = {
-            id: uid(),
-            title: f.name,
-            authors: [],
-            format: "txt",
-            ...meta,
-            ...saved,
-            rootId: root.id,
-            managed: true,
-            available: true,
-            status: "unread",
-            favorite: false,
-            tagIds: [],
-            collectionIds: [],
-            createdAt: at,
-            updatedAt: at,
-            cloudState: "local",
-          };
-          this.books.push(book);
-          await this.persist();
+          record(await this.importOneInput(await readAt(i), root));
+        } catch (error) {
           record({
-            filename: f.name,
-            status: "success",
-            bookId: book.id,
-          });
-        } catch (e) {
-          record({
-            filename: f.name,
+            filename,
             status: "error",
-            message: e instanceof Error ? e.message : String(e),
+            message: error instanceof Error ? error.message : String(error),
           });
         } finally {
-          this.importProgress = (i + 1) / inputs.length;
+          this.importProgress = (i + 1) / Math.max(1, count);
         }
       }
-      this.notify(
-        `导入完成：${this.importResults.filter((x) => x.status === "success").length} 本书籍`,
-      );
+      if (shouldNotify) {
+        this.notify(
+          `导入完成：${results.filter((result) => result.status === "success").length} 本书籍`,
+        );
+      }
     } finally {
       this.busy = false;
     }
     return results;
+  }
+
+  async importFiles(files?: FileList | File[]) {
+    this.cancelImport = false;
+    this.importResults = [];
+    this.importProgress = 0;
+    this.navigate("import");
+    try {
+      if (files) {
+        const selected = Array.from(files);
+        if (!selected.length) return;
+        await this.processImportBatch(
+          selected.length,
+          (index) => selected[index]!.name,
+          async (index) => {
+            const file = selected[index]!;
+            return {
+              name: file.name,
+              bytes: new Uint8Array(await file.arrayBuffer()),
+            };
+          },
+        );
+        return;
+      }
+
+      if (nativeHost) {
+        const picked = await hostCall<
+          Array<{ id?: string; name: string; size?: number; bytes?: number[] }>
+        >("file.pickBooks");
+        if (!picked?.length) return;
+        const ids = picked.flatMap((item) => item.id ? [item.id] : []);
+        try {
+          await this.processImportBatch(
+            picked.length,
+            (index) => picked[index]!.name,
+            async (index) => {
+              const item = picked[index]!;
+              if (Array.isArray(item.bytes)) {
+                return { name: item.name, bytes: new Uint8Array(item.bytes) };
+              }
+              if (!item.id) throw new Error("原生文件选择器未返回有效文件句柄。");
+              const loaded = await hostCall<{ name: string; bytes: number[] }>(
+                "file.readPickedBook",
+                { id: item.id },
+              );
+              return { name: loaded.name || item.name, bytes: new Uint8Array(loaded.bytes) };
+            },
+          );
+        } finally {
+          if (ids.length) {
+            await hostCall("file.releasePickedBooks", { ids }).catch(() => undefined);
+          }
+        }
+        return;
+      }
+
+      const input = document.createElement("input");
+      input.type = "file";
+      input.multiple = true;
+      input.accept = ".epub,.pdf,.txt,.mobi";
+      input.onchange = () => void this.importFiles(input.files || undefined);
+      input.click();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  async importNativePaths(paths: string[]) {
+    this.cancelImport = false;
+    this.navigate("import");
+    this.importResults = [];
+    this.importProgress = 0;
+    try {
+      await this.processImportBatch(
+        paths.length,
+        (index) => paths[index]!.split(/[\\/]/).pop() || paths[index]!,
+        async (index) => {
+          const picked = await hostCall<{ name: string; bytes: number[] }[]>(
+            "file.readPaths",
+            { paths: [paths[index]!] },
+          );
+          const file = picked[0];
+          if (!file) throw new Error("未能读取所选书籍文件。");
+          return { name: file.name, bytes: new Uint8Array(file.bytes) };
+        },
+      );
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  async importInputs(
+    inputs: { name: string; bytes: Uint8Array }[],
+    options: { notify?: boolean } = {},
+  ): Promise<ImportResult[]> {
+    this.cancelImport = false;
+    return this.processImportBatch(
+      inputs.length,
+      (index) => inputs[index]!.name,
+      async (index) => inputs[index]!,
+      options.notify !== false,
+    );
   }
   async saveBook(book: Book) {
     book.updatedAt = now();

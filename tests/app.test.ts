@@ -150,6 +150,34 @@ afterEach(async () => {
 });
 
 describe('Granite app persistence and destructive operations', () => {
+  it('imports selected files sequentially instead of preloading the whole batch', async () => {
+    const app = await loadApp();
+    let activeReads = 0;
+    let maximumConcurrentReads = 0;
+    const files = Array.from({ length: 12 }, (_, index) => {
+      const bytes = new TextEncoder().encode(`sequential import ${index}`);
+      return {
+        name: `batch-${index}.txt`,
+        size: bytes.byteLength,
+        lastModified: index,
+        arrayBuffer: async () => {
+          activeReads += 1;
+          maximumConcurrentReads = Math.max(maximumConcurrentReads, activeReads);
+          await Promise.resolve();
+          activeReads -= 1;
+          return bytes.slice().buffer;
+        },
+      } as unknown as File;
+    });
+
+    await app.importFiles(files);
+
+    expect(maximumConcurrentReads).toBe(1);
+    expect(app.books).toHaveLength(files.length);
+    expect(app.importResults).toHaveLength(files.length);
+    expect(app.importResults.every((result) => result.status === 'success')).toBe(true);
+  });
+
   it('restores books, progress, notes, tags, and settings after a module restart', async () => {
     const app = await loadApp();
     const bytes = new TextEncoder().encode('persistent reading content');

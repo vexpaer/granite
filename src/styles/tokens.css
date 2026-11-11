@@ -56,6 +56,14 @@
   --content-max: 1540px;
 }
 
+:root[data-layout='phone'] {
+  font-size: 14px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --content-max: 100%;
+}
+
 :root[data-theme='dark'] {
   color-scheme: dark;
   --canvas: #19171e;

@@ -100,7 +100,6 @@ const pluginPageTitle = computed(() => {
   if (!pluginRegistryReady.value) return '正在加载插件';
   return pluginPageEntry.value?.title || '插件页面';
 });
-const currentRouteTitle = computed(() => routeTitle(app.route.name));
 const searchShortcutLabel = computed(() =>
   String(app.settings.shortcuts.search || 'Control+k')
     .replace(/\bControl\b/gi, 'Ctrl')
@@ -135,7 +134,9 @@ const currentViewProps = computed(() =>
   pluginPageEntry.value ? { entry: pluginPageEntry.value } : {},
 );
 const backAvailable = computed(
-  () => app.history.length > 0 && !['home', 'bookshelf', 'notebook', 'statistics'].includes(app.route.name),
+  () =>
+    app.history.length > 0 &&
+    !['home', 'bookshelf', 'notebook', 'statistics', 'me', 'book-detail', 'import'].includes(app.route.name),
 );
 
 const syncMeta = computed(() => {
@@ -218,11 +219,13 @@ function effectiveTheme() {
 function applyAppearance() {
   document.documentElement.dataset.theme = effectiveTheme();
   document.documentElement.dataset.density = app.settings.density;
+  document.documentElement.dataset.layout = androidPortrait.value ? 'phone' : 'default';
 }
 
 function onResize() {
   viewport.width = window.innerWidth;
   viewport.height = window.innerHeight;
+  applyAppearance();
 }
 
 function submitSearch() {
@@ -324,7 +327,6 @@ onBeforeUnmount(() => {
         >
           <ArrowLeft :size="18" />
         </button>
-        <span v-if="android" class="android-page-title">{{ currentRouteTitle }}</span>
         <form class="global-search" role="search" @submit.prevent="submitSearch">
           <Search :size="18" aria-hidden="true" />
           <input

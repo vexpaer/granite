@@ -26,11 +26,30 @@ const localErrors = ref<string[]>([]);
 
 const supported = computed(() => files.value.filter((file) => Boolean(formatOf(file.name)) && file.size > 0));
 const unsupported = computed(() => files.value.filter((file) => !formatOf(file.name) || file.size === 0));
-const importBusy = computed(() => app.busy && app.importProgress < 1 && app.importResults.length > 0);
+const FILE_PREVIEW_LIMIT = 48;
+const RESULT_PREVIEW_LIMIT = 48;
+const importBusy = computed(() => app.busy && app.route.name === 'import');
+const visibleFiles = computed(() => files.value.slice(0, FILE_PREVIEW_LIMIT));
+const fileHiddenCount = computed(() => Math.max(0, files.value.length - visibleFiles.value.length));
+const resultCounts = computed(() => {
+  const counts = { success: 0, duplicate: 0, error: 0, cancelled: 0 };
+  for (const result of app.importResults) counts[result.status] += 1;
+  return counts;
+});
+const visibleResults = computed(() => {
+  const entries = app.importResults.map((result, index) => ({ result, index }));
+  const failures = entries.filter(({ result }) => result.status === 'error').slice(0, RESULT_PREVIEW_LIMIT);
+  const recent = entries
+    .filter(({ result }) => result.status !== 'error')
+    .slice(-Math.max(0, RESULT_PREVIEW_LIMIT - failures.length));
+  return [...failures, ...recent];
+});
+const resultHiddenCount = computed(() => Math.max(0, app.importResults.length - visibleResults.value.length));
+const fileByName = computed(() => new Map(files.value.map((file) => [file.name, file])));
 const failedFiles = computed(() =>
   app.importResults
     .filter((result) => result.status === 'error')
-    .map((result) => files.value.find((file) => file.name === result.filename))
+    .map((result) => fileByName.value.get(result.filename))
     .filter((file): file is File => Boolean(file)),
 );
 
@@ -175,16 +194,19 @@ function statusLabel(status: string) {
     <section v-if="files.length" class="surface-card section-card file-review">
       <div class="section-heading">
         <h2>待导入文件</h2>
-        <span>{{ supported.length }} 个有效 · {{ unsupported.length }} 个需处理</span>
+        <span>{{ supported.length }} 个有效 · {{ unsupported.length }} 个需处理<template v-if="fileHiddenCount"> · 预览 {{ visibleFiles.length }} 个</template></span>
       </div>
       <div class="import-file-list">
-        <div v-for="file in files" :key="`${file.name}-${file.size}-${file.lastModified}`" class="import-file-row" :class="{ 'has-error': !formatOf(file.name) || !file.size }">
+        <div v-for="file in visibleFiles" :key="`${file.name}-${file.size}-${file.lastModified}`" class="import-file-row" :class="{ 'has-error': !formatOf(file.name) || !file.size }">
           <span class="file-type">{{ formatOf(file.name)?.toUpperCase() || '?' }}</span>
           <span class="file-copy"><strong>{{ file.name }}</strong><small>{{ fileSize(file.size) }}<template v-if="!formatOf(file.name)"> · 不支持的格式</template></small></span>
           <span v-if="app.books.some((book) => book.title.includes(file.name.replace(/\.[^.]+$/, '')) && book.size === file.size)" class="tag-chip">可能重复</span>
           <button class="icon-button icon-button--small" type="button" aria-label="移除文件" @click="removeFile(file)"><X :size="15" /></button>
         </div>
       </div>
+      <p v-if="fileHiddenCount" class="import-list-note">
+        已选择 {{ files.length }} 个文件；列表仅预览前 {{ visibleFiles.length }} 个，全部有效文件仍会逐本处理。
+      </p>
       <div v-if="localErrors.length" class="import-errors" role="alert">
         <AlertCircle :size="17" />
         <span v-for="error in localErrors" :key="error">{{ error }}</span>
@@ -199,7 +221,12 @@ function statusLabel(status: string) {
 
     <section v-if="importBusy || app.importResults.length" class="surface-card section-card import-results">
       <div class="section-heading">
-        <h2>{{ importBusy ? '正在导入' : '导入结果' }}</h2>
+        <div>
+          <h2>{{ importBusy ? '正在导入' : '导入结果' }}</h2>
+          <p v-if="app.importResults.length" class="import-result-summary">
+            {{ resultCounts.success }} 成功 · {{ resultCounts.duplicate }} 重复 · {{ resultCounts.error }} 失败
+          </p>
+        </div>
         <button v-if="importBusy" class="button button--danger button--small" type="button" @click="app.cancelImport = true">取消剩余导入</button>
       </div>
       <div v-if="importBusy" class="import-progress">
@@ -209,13 +236,16 @@ function statusLabel(status: string) {
         <div><strong>正在解析、校验并写入书籍</strong><p>每个成功文件都会立即保存在目标书库；取消不会删除已经完成的项目。</p></div>
       </div>
       <div v-if="app.importResults.length" class="result-list">
-        <div v-for="(result, index) in app.importResults" :key="`${result.filename}-${index}`" class="result-row">
-          <CheckCircle2 v-if="result.status === 'success'" :size="17" />
-          <RotateCcw v-else-if="result.status === 'duplicate'" :size="17" />
+        <div v-for="entry in visibleResults" :key="`${entry.result.filename}-${entry.index}`" class="result-row">
+          <CheckCircle2 v-if="entry.result.status === 'success'" :size="17" />
+          <RotateCcw v-else-if="entry.result.status === 'duplicate'" :size="17" />
           <XCircle v-else :size="17" />
-          <span><strong>{{ result.filename }}</strong><small>{{ result.message || statusLabel(result.status) }}</small></span>
-          <button v-if="result.status === 'success' && result.bookId" class="button button--ghost button--small" type="button" @click="app.navigate('book-detail', result.bookId)">查看书籍</button>
+          <span><strong>{{ entry.result.filename }}</strong><small>{{ entry.result.message || statusLabel(entry.result.status) }}</small></span>
+          <button v-if="entry.result.status === 'success' && entry.result.bookId" class="button button--ghost button--small" type="button" @click="app.navigate('book-detail', entry.result.bookId)">查看书籍</button>
         </div>
+        <p v-if="resultHiddenCount" class="import-list-note">
+          共处理 {{ app.importResults.length }} 项；显示全部失败项与最近处理结果。
+        </p>
       </div>
       <div v-if="!importBusy && failedFiles.length" class="retry-row">
         <span>{{ failedFiles.length }} 个文件失败，成功文件不会重复导入。</span>
@@ -510,6 +540,18 @@ function statusLabel(status: string) {
 .result-list {
   display: grid;
   gap: 0.25rem;
+}
+
+.import-list-note,
+.import-result-summary {
+  margin: 0.35rem 0 0;
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.import-result-summary {
+  margin-top: 0.2rem;
 }
 
 .result-row {
