@@ -115,6 +115,7 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
         when (request.op) {
             "root.pick" -> activity.runOnUiThread { pickRoot(invoke) }
             "file.pickBooks" -> activity.runOnUiThread { pickBooks(invoke) }
+            "app.openUrl" -> activity.runOnUiThread { openExternalUrl(invoke, request.args) }
             "book.export", "backup.export" ->
                 activity.runOnUiThread { exportFile(invoke, request.args) }
             "lifecycle.keepAwake" -> {
@@ -165,6 +166,24 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
             "notebook.mirror", "notebook.sync" ->
                 invoke.reject("Notebook mirroring is available only to the Rust host")
             else -> invoke.reject("Unknown Android bridge operation")
+        }
+    }
+
+    private fun openExternalUrl(invoke: Invoke, args: JsonNode) {
+        try {
+            val uri = Uri.parse(requiredString(args, "url"))
+            if (
+                uri.scheme != "https" ||
+                uri.host != "github.com" ||
+                !uri.path.orEmpty().startsWith("/vexpaer/granite/releases/")
+            ) {
+                invoke.reject("Only official Granite release URLs can be opened")
+                return
+            }
+            activity.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            invoke.resolveObject(true)
+        } catch (exception: Exception) {
+            rejectSafely(invoke, exception, "Could not open the Granite release URL")
         }
     }
 

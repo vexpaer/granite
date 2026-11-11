@@ -38,7 +38,6 @@ import TagResultsView from './views/TagResultsView.vue';
 import SearchView from './views/SearchView.vue';
 import ImportView from './views/ImportView.vue';
 import ConflictsView from './views/ConflictsView.vue';
-import DiagnosticsView from './views/DiagnosticsView.vue';
 import PluginSlots from './components/PluginSlots.vue';
 import PluginSurface from './components/PluginSurface.vue';
 import type { PluginUiEntry } from './services/plugin-manager';
@@ -124,7 +123,6 @@ const views = {
   search: SearchView,
   import: ImportView,
   conflicts: ConflictsView,
-  diagnostics: DiagnosticsView,
 } as const;
 const currentView = computed(() =>
   pluginRoute.value
@@ -195,7 +193,6 @@ function routeTitle(name: string) {
     search: '全局搜索',
     import: '导入书籍',
     conflicts: '同步冲突',
-    diagnostics: '关于与诊断',
     reader: '阅读',
   }[name] || 'Granite';
 }

@@ -6,18 +6,21 @@ import {
   ArrowDown,
   ArrowUp,
   BookOpen,
-  Boxes,
   CheckCircle2,
   ChevronRight,
   Database,
+  Download,
+  ExternalLink,
   Eye,
   EyeOff,
   FolderCog,
   FolderPlus,
   House,
   ImagePlus,
+  Info,
   Keyboard,
   MonitorCog,
+  RefreshCw,
   RotateCcw,
   Save,
   Settings2,
@@ -39,6 +42,8 @@ import {
 } from '../components/homeLayout';
 import { formatDateTime, initials } from '../components/utils';
 import type { LibraryRoot } from '../types';
+import packageInfo from '../../package.json';
+import { checkForUpdates, openExternalUrl, type AppUpdate } from '../services/update';
 
 const app = useApp();
 const categories = [
@@ -48,12 +53,12 @@ const categories = [
   { id: 'reader', label: '阅读器', icon: BookOpen },
   { id: 'shortcuts', label: '快捷键与输入', icon: Keyboard },
   { id: 'data', label: '数据与备份', icon: Database },
+  { id: 'about', label: '关于 Granite', icon: Info },
 ];
 const category = ref(categories.some((item) => item.id === app.route.id) ? String(app.route.id) : 'general');
 const draft = ref(JSON.parse(JSON.stringify(app.settings)));
 const dirty = ref(false);
 const saving = ref(false);
-const profileBusy = ref(false);
 const savedAt = ref('');
 const removeRootTarget = ref<LibraryRoot | null>(null);
 const migrationOpen = ref(false);
@@ -70,6 +75,18 @@ const backupPreviewOpen = ref(false);
 const migrationResult = ref<{ completed: boolean; message: string } | null>(null);
 const backupInput = ref<HTMLInputElement>();
 const backgroundInput = ref<HTMLInputElement>();
+const updateChecking = ref(false);
+const updateInfo = ref<AppUpdate | null>(null);
+const updateError = ref('');
+const updateCheckedAt = ref('');
+const updateStatus = computed(() => {
+  if (updateChecking.value) return '正在检查新版本…';
+  if (updateError.value) return '暂时无法检查更新，请检查网络后重试。';
+  if (!updateInfo.value) return '检查 Granite 官方发布的最新版本。';
+  return updateInfo.value.available
+    ? '发现新版本 v' + updateInfo.value.latestVersion
+    : '当前已是最新版本 v' + packageInfo.version;
+});
 let suppressDirty = false;
 let stopMigrationProgress: (() => void) | undefined;
 
@@ -89,7 +106,6 @@ watch(
 );
 
 const migrationSources = computed(() => app.roots.filter((root) => root.enabled));
-const shortcutEntries = computed(() => Object.entries(draft.value.shortcuts || {}));
 const disabled = computed(() => saving.value || !dirty.value);
 const homeLayout = computed(() => resolveHomeLayout(draft.value.layout || {}));
 const configurableHomeModules = computed(() =>
@@ -188,43 +204,6 @@ function refreshDraftFromApp() {
   });
 }
 
-async function saveCurrentProfile() {
-  const name = draft.value.profile.trim();
-  if (!name) {
-    app.error = '请选择或输入配置名称。';
-    return;
-  }
-  profileBusy.value = true;
-  try {
-    ensureDraftLayout();
-    app.settings = JSON.parse(JSON.stringify(draft.value));
-    if (dirty.value || !savedAt.value) await app.saveSettings();
-    await app.saveProfile(name);
-    refreshDraftFromApp();
-    savedAt.value = new Date().toISOString();
-  } catch (error) {
-    app.error = error instanceof Error ? error.message : String(error);
-  } finally {
-    profileBusy.value = false;
-  }
-}
-
-async function applySelectedProfile() {
-  const name = draft.value.profile.trim();
-  if (!name) return;
-  profileBusy.value = true;
-  try {
-    if (dirty.value) await save();
-    await app.applyProfile(name);
-    refreshDraftFromApp();
-    savedAt.value = new Date().toISOString();
-  } catch (error) {
-    app.error = error instanceof Error ? error.message : String(error);
-  } finally {
-    profileBusy.value = false;
-  }
-}
-
 function resetDefaults() {
   suppressDirty = true;
   draft.value = defaultSettings();
@@ -237,6 +216,38 @@ function resetDefaults() {
 function chooseCategory(id: string) {
   category.value = id;
   app.navigate('settings', id);
+}
+
+async function checkUpdate() {
+  updateChecking.value = true;
+  updateError.value = '';
+  try {
+    updateInfo.value = await checkForUpdates();
+    updateCheckedAt.value = new Date().toISOString();
+  } catch (error) {
+    updateInfo.value = null;
+    updateError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    updateChecking.value = false;
+  }
+}
+
+async function downloadUpdate() {
+  if (!updateInfo.value?.available) return;
+  try {
+    await openExternalUrl(updateInfo.value.downloadUrl);
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function openReleaseNotes() {
+  if (!updateInfo.value) return;
+  try {
+    await openExternalUrl(updateInfo.value.releaseUrl);
+  } catch (error) {
+    app.error = error instanceof Error ? error.message : String(error);
+  }
 }
 
 async function onBackgroundFile(event: Event) {
@@ -333,17 +344,6 @@ watch([migrationOpen, migrationRunning], ([open, running]) => {
   else if (!running) stopMigrationProgressListener();
 });
 
-function addShortcut() {
-  let name = '新快捷键';
-  let index = 2;
-  while (name in draft.value.shortcuts) name = `新快捷键 ${index++}`;
-  draft.value.shortcuts[name] = '';
-}
-
-function removeShortcut(name: string) {
-  delete draft.value.shortcuts[name];
-}
-
 async function exportBackup() {
   await app.exportBackup();
 }
@@ -378,8 +378,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="settings-view page-view">
-    <PageHeader title="设置" description="外观与阅读偏好可同步；书库路径与凭证保留在当前设备。">
-      <template #actions>
+    <PageHeader :title="category === 'about' ? '关于 Granite' : '设置'" :description="category === 'about' ? '版本信息与软件更新。' : '外观与阅读偏好可同步；书库路径与凭证保留在当前设备。'">
+      <template v-if="category !== 'about'" #actions>
         <span v-if="savedAt" class="saved-note">已于 {{ new Date(savedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }} 保存</span>
         <button class="button button--ghost" type="button" @click="resetDefaults"><RotateCcw :size="15" />恢复默认</button>
         <button class="button button--primary" type="button" :disabled="disabled" @click="save">
@@ -400,11 +400,6 @@ onBeforeUnmount(() => {
         >
           <component :is="item.icon" :size="17" /><span>{{ item.label }}</span><ChevronRight :size="14" />
         </button>
-        <div class="settings-nav__shortcuts">
-          <button type="button" @click="app.navigate('plugins')"><Boxes :size="17" /><span>插件中心</span><ChevronRight :size="14" /></button>
-          <button type="button" @click="app.navigate('tags')"><ArchiveRestore :size="17" /><span>标签管理</span><ChevronRight :size="14" /></button>
-          <button type="button" @click="app.navigate('sync')"><Database :size="17" /><span>同步与存储</span><ChevronRight :size="14" /></button>
-        </div>
       </nav>
 
       <section class="settings-content surface-card">
@@ -418,11 +413,6 @@ onBeforeUnmount(() => {
             </label>
           </div>
           <div class="form-grid settings-form">
-            <div class="form-field">
-              <span>界面语言</span>
-              <div class="read-only-field">简体中文</div>
-              <small class="field-hint">首版界面以简体中文提供。</small>
-            </div>
             <label class="form-field">
               <span>每日阅读目标（分钟）</span>
               <input v-model.number="draft.dailyGoal" class="field" type="number" min="1" max="1440" />
@@ -432,25 +422,6 @@ onBeforeUnmount(() => {
               <input v-model.number="draft.idleMinutes" class="field" type="number" min="1" max="120" />
               <small class="field-hint">超过阈值没有输入时，不计入有效阅读时间。</small>
             </label>
-            <div class="form-field form-field--full profile-setting">
-              <span>工作区 Profile</span>
-              <div class="profile-setting__controls">
-                <select v-model="draft.profile" class="select" aria-label="选择工作区 Profile">
-                  <option value="Minimal">Minimal · 简洁</option>
-                  <option value="Research">Research · 研究</option>
-                  <option value="Knowledge">Knowledge · 知识</option>
-                  <option value="Dashboard">Dashboard · 仪表盘</option>
-                  <option value="Custom">Custom · 自定义</option>
-                </select>
-                <button class="button button--secondary" type="button" :disabled="profileBusy || saving" @click="saveCurrentProfile">
-                  <Save :size="15" />{{ profileBusy ? '处理中' : '保存当前配置' }}
-                </button>
-                <button class="button button--primary" type="button" :disabled="profileBusy || saving" @click="applySelectedProfile">
-                  应用 Profile
-                </button>
-              </div>
-              <small class="field-hint">保存会记录当前主题、布局、插件启用状态与阅读器默认宽度；应用时会保留本机同步 Provider 和凭证。</small>
-            </div>
           </div>
         </template>
 
@@ -497,10 +468,6 @@ onBeforeUnmount(() => {
               <button v-if="draft.background" class="button button--ghost" type="button" @click="clearBackground">恢复默认</button>
             </div>
             <input ref="backgroundInput" class="sr-only" type="file" accept="image/*" @change="onBackgroundFile" />
-          </div>
-          <div class="profile-preview">
-            <strong>{{ draft.profile }}</strong>
-            <p>当前配置保存应用主题、布局密度和导航状态。阅读主题在“阅读器”分类中独立设置。</p>
           </div>
           <section class="home-layout-settings" aria-labelledby="home-layout-heading">
             <div class="settings-section-heading settings-section-heading--action">
@@ -680,22 +647,22 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="category === 'shortcuts'">
-          <div class="settings-section-heading settings-section-heading--action">
-            <div><h2>快捷键与输入</h2><p>应用快捷键可修改；系统返回和阅读核心手势具有更高优先级。</p></div>
-            <button class="button button--secondary" type="button" @click="addShortcut">添加快捷键</button>
+          <div class="settings-section-heading">
+            <h2>快捷键</h2>
+            <p>设置全局搜索的键盘组合。</p>
           </div>
-          <div class="shortcut-list">
-            <div v-for="([name, value]) in shortcutEntries" :key="name" class="shortcut-row">
-              <input v-model="draft.shortcuts[name]" class="field" :aria-label="`${name} 快捷键`" placeholder="输入组合键" />
-              <span>{{ name }}</span>
-              <button class="icon-button icon-button--small danger" type="button" :aria-label="`删除 ${name} 快捷键`" @click="removeShortcut(name)"><Trash2 :size="15" /></button>
-            </div>
+          <div class="form-grid settings-form">
+            <label class="form-field">
+              <span>全局搜索</span>
+              <input v-model="draft.shortcuts.search" class="field" placeholder="Control+k" />
+              <small class="field-hint">例如 Control+k 或 Meta+k。</small>
+            </label>
           </div>
           <div class="reserved-shortcuts">
-            <strong>全局输入</strong>
-            <span><kbd>{{ draft.shortcuts.search || 'Control+k' }}</kbd> 全局搜索</span>
+            <strong>固定快捷键</strong>
             <span><kbd>Alt</kbd> + <kbd>←</kbd> 返回上一页</span>
             <span><kbd>Esc</kbd> 关闭最上层对话框或面板</span>
+            <span><kbd>←</kbd> / <kbd>→</kbd> 阅读器翻页</span>
           </div>
         </template>
 
@@ -719,6 +686,46 @@ onBeforeUnmount(() => {
             <strong>{{ app.books.length }} 本书 · {{ app.notes.length }} 篇笔记 · {{ app.sessions.length }} 个会话</strong>
             <p>应用数据库和设置保存在本机可靠存储；书库原文件由用户选择的根目录管理。</p>
           </div>
+        </template>
+
+        <template v-else-if="category === 'about'">
+          <section class="about-card">
+            <div class="about-card__mark">G</div>
+            <div>
+              <h2>Granite</h2>
+              <p>本地优先的电子书阅读器与个人书库</p>
+              <span>v{{ packageInfo.version }} · AGPL-3.0-only</span>
+            </div>
+          </section>
+          <section class="update-card">
+            <div class="update-card__copy">
+              <h3>软件更新</h3>
+              <p>{{ updateStatus }}</p>
+              <small v-if="updateCheckedAt">最近检查：{{ new Date(updateCheckedAt).toLocaleString('zh-CN') }}</small>
+              <small v-else>检查 Windows 与 Android 各自的正式版本。</small>
+            </div>
+            <div class="update-card__actions">
+              <button class="button button--secondary" type="button" :disabled="updateChecking" @click="checkUpdate">
+                <RefreshCw :size="16" :class="{ 'is-spinning': updateChecking }" />
+                {{ updateChecking ? '检查中…' : '检查新版本' }}
+              </button>
+              <button class="button button--primary" type="button" :disabled="!updateInfo?.available || updateChecking" @click="downloadUpdate">
+                <Download :size="16" />
+                {{ updateInfo?.hasAsset === false ? '打开下载页面' : '下载新版本' }}
+              </button>
+            </div>
+          </section>
+          <section v-if="updateInfo?.available" class="update-release">
+            <div>
+              <strong>发现新版本 v{{ updateInfo.latestVersion }}</strong>
+              <p v-if="updateInfo.notes">{{ updateInfo.notes }}</p>
+              <p v-else>此版本已在 Granite 官方发布页面提供。</p>
+            </div>
+            <button class="button button--ghost button--small" type="button" @click="openReleaseNotes">
+              查看更新说明 <ExternalLink :size="14" />
+            </button>
+          </section>
+          <p class="about-footnote">更新包由 Granite 官方 GitHub Release 提供，Windows 安装包与 Android APK 分别发布。</p>
         </template>
 
         <div class="settings-plugin-pages">
@@ -1607,5 +1614,75 @@ kbd {
     grid-column: 3;
   }
 }
+
+.about-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--surface-elevated);
+}
+.about-card__mark {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 17px;
+  color: #fff;
+  background: linear-gradient(145deg, var(--lavender), var(--accent-strong));
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-style: italic;
+}
+.about-card h2 { margin: 0; font-family: var(--font-display); font-size: 1.8rem; font-weight: 600; }
+.about-card p { margin: 0.15rem 0; color: var(--text-secondary); }
+.about-card span, .update-card__copy small, .about-footnote { color: var(--text-tertiary); font-size: 0.75rem; }
+.update-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+.update-card__copy { min-width: 0; }
+.update-card__copy h3 { margin: 0 0 0.3rem; font-size: 0.95rem; }
+.update-card__copy p { margin: 0; color: var(--text-secondary); font-size: 0.85rem; }
+.update-card__copy small { display: block; margin-top: 0.35rem; }
+.update-card__actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 0.5rem; }
+.update-release {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-elevated);
+}
+.update-release strong { font-size: 0.85rem; }
+.update-release p {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.about-footnote { margin: 0; }
+.is-spinning { animation: spin 0.8s linear infinite; }
+@media (max-width: 600px) {
+  .update-card, .update-release { align-items: stretch; flex-direction: column; }
+  .update-card__actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .update-card__actions .button { justify-content: center; }
+}
+
 </style>
 
