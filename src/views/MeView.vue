@@ -2,10 +2,9 @@
 import { computed, ref } from 'vue';
 import {
   ChevronRight,
-  CircleHelp,
+  Info,
   Cloud,
   FolderOpen,
-  KeyRound,
   LibraryBig,
   Palette,
   PlugZap,
@@ -15,7 +14,8 @@ import {
 } from 'lucide-vue-next';
 import { useApp } from '../stores/app';
 import PageHeader from '../components/PageHeader.vue';
-import { initials, relativeTime } from '../components/utils';
+import packageInfo from '../../package.json';
+import { initials } from '../components/utils';
 
 const app = useApp();
 const editingName = ref(false);
@@ -24,7 +24,6 @@ const username = computed(() => app.settings.username?.trim() || '本地读者')
 const providerName = computed(() => app.settings.provider?.name || '未配置');
 const enabledRoots = computed(() => app.roots.filter((root) => root.enabled));
 const enabledPlugins = computed(() => app.plugins.filter((plugin) => plugin.enabled));
-const latestSync = computed(() => app.syncHistory[0]);
 
 const groups = computed(() => [
   {
@@ -76,20 +75,9 @@ const groups = computed(() => [
       },
       {
         title: '应用设置',
-        detail: '语言、快捷键、备份与数据',
+        detail: '快捷键、备份与数据',
         icon: Settings2,
         route: 'settings',
-      },
-    ],
-  },
-  {
-    label: '信息',
-    items: [
-      {
-        title: '关于与诊断',
-        detail: '运行环境、脱敏日志与诊断导出',
-        icon: CircleHelp,
-        route: 'diagnostics',
       },
     ],
   },
@@ -149,9 +137,9 @@ function openItem(route: string, id?: string) {
         <span><strong>{{ enabledPlugins.length }} / {{ app.plugins.length }}</strong>插件已启用</span>
         <ChevronRight :size="16" />
       </button>
-      <button class="surface-card me-status" type="button" @click="app.navigate('diagnostics')">
-        <KeyRound :size="19" />
-        <span><strong>{{ latestSync ? latestSync.status : '无记录' }}</strong>{{ latestSync ? relativeTime(latestSync.at) : '尚未同步' }}</span>
+      <button class="surface-card me-status" type="button" @click="app.navigate('settings', 'about')">
+        <Info :size="19" />
+        <span><strong>v{{ packageInfo.version }}</strong>关于 Granite</span>
         <ChevronRight :size="16" />
       </button>
     </section>

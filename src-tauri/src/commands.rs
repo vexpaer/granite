@@ -179,6 +179,8 @@ async fn dispatch(app: &AppHandle, state: &HostState, request: HostRequest) -> H
             Ok(json!({ "bytes": bytes }))
         }
         "diagnostics" => diagnostics(state),
+        #[cfg(target_os = "windows")]
+        "app.openUrl" => open_external_url(&args),
         "share.consume" | "share.ack" => Err(HostError::Unsupported(format!(
             "{} is available only through the Android native bridge",
             request.op
@@ -205,6 +207,7 @@ fn android_should_dispatch(op: &str, args: &Value) -> bool {
             | "lifecycle.keepAwake"
             | "lifecycle.immersive"
             | "lifecycle.back"
+            | "app.openUrl"
             | "share.consume"
             | "share.ack"
     ) {
@@ -621,6 +624,45 @@ async fn provider_request(app: &AppHandle, state: &HostState, args: &Args) -> Ho
     serde_json::to_value(response).map_err(Into::into)
 }
 
+#[cfg(target_os = "windows")]
+fn open_external_url(args: &Args) -> HostResult<Value> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+    let raw_url = args.string("url")?;
+    let parsed = url::Url::parse(raw_url)
+        .map_err(|error| HostError::InvalidArgs(format!("invalid release URL: {error}")))?;
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("github.com")
+        || parsed.port().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !parsed.path().starts_with("/vexpaer/granite/releases/")
+    {
+        return Err(HostError::Forbidden(
+            "only official Granite release URLs can be opened".into(),
+        ));
+    }
+
+    let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let target: Vec<u16> = parsed.as_str().encode_utf16().chain(std::iter::once(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result as isize <= 32 {
+        return Err(HostError::Storage(
+            "Windows could not open the Granite release URL".into(),
+        ));
+    }
+    Ok(Value::Bool(true))
+}
+
 fn diagnostics(state: &HostState) -> HostResult<Value> {
     let database = state.database();
     let schema = database.schema_version()?;
@@ -813,6 +855,7 @@ mod tests {
     #[test]
     fn android_dispatches_default_picker_and_saf_roots_to_native_bridge() {
         assert!(android_should_dispatch("root.default", &json!({})));
+        assert!(android_should_dispatch("app.openUrl", &json!({"url": "https://github.com/vexpaer/granite/releases/latest"})));
         assert!(android_should_dispatch("file.pickBooks", &json!({})));
         assert!(android_should_dispatch(
             "share.ack",

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   ChevronDown,
-  CircleHelp,
+  Info,
   Cloud,
   Settings2,
   UserRound,
@@ -87,8 +87,8 @@ onBeforeUnmount(() => {
       <button type="button" role="menuitem" @click="go('sync')">
         <Cloud :size="17" /><span>同步与存储</span>
       </button>
-      <button type="button" role="menuitem" @click="go('diagnostics')">
-        <CircleHelp :size="17" /><span>关于与诊断</span>
+      <button type="button" role="menuitem" @click="go('settings', 'about')">
+        <Info :size="17" /><span>关于 Granite</span>
       </button>
     </div>
   </div>

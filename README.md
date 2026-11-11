@@ -8,7 +8,7 @@
 
 <p>
   <a href="LICENSE"><img alt="许可证 AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-blue"></a>
-  <a href="https://github.com/vexpaer/granite/releases/tag/v0.1.0"><img alt="版本 v0.1.0" src="https://img.shields.io/github/v/release/vexpaer/granite?label=release"></a>
+  <a href="https://github.com/vexpaer/granite/releases"><img alt="版本与下载" src="https://img.shields.io/github/v/release/vexpaer/granite?label=release"></a>
   <a href="https://github.com/vexpaer/granite/actions/workflows/windows.yml"><img alt="Windows 构建" src="https://github.com/vexpaer/granite/actions/workflows/windows.yml/badge.svg"></a>
   <a href="https://github.com/vexpaer/granite/actions/workflows/android.yml"><img alt="Android 构建" src="https://github.com/vexpaer/granite/actions/workflows/android.yml/badge.svg"></a>
 </p>
@@ -53,14 +53,14 @@ Granite 是电子书阅读器和个人书库。书籍、标注、笔记、进度
 
 ## 下载
 
-当前发布为 [v0.1.0](https://github.com/vexpaer/granite/releases/tag/v0.1.0)。
+当前版本为 v0.1.1。Windows 与 Android 使用独立 Release；应用内的更新检查会按当前平台查找对应安装包。
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| Windows x64 | [Granite-0.1.0-windows-x64-setup.exe](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-0.1.0-windows-x64-setup.exe) | 8.04 MB，NSIS，未做代码签名，需要 WebView2 |
-| Android ARM64 | [Granite-v0.1.0-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.0/Granite-v0.1.0-aarch64.apk) | 22.97 MB，发布密钥签名，Android 7.0（API 24）起 |
+| Windows x64 | [Granite-0.1.1-windows-x64-setup.exe](https://github.com/vexpaer/granite/releases/download/v0.1.1-windows/Granite-0.1.1-windows-x64-setup.exe) | NSIS，未做代码签名，需要 WebView2 |
+| Android ARM64 | [Granite-0.1.1-android-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.1-android/Granite-0.1.1-android-aarch64.apk) | 发布密钥签名，Android 7.0（API 24）起 |
 
-校验和见 [SHA256SUMS](https://github.com/vexpaer/granite/releases/download/v0.1.0/SHA256SUMS)。
+校验和分别见 Windows [SHA256SUMS.windows](https://github.com/vexpaer/granite/releases/download/v0.1.1-windows/SHA256SUMS.windows) 与 Android [SHA256SUMS.android](https://github.com/vexpaer/granite/releases/download/v0.1.1-android/SHA256SUMS.android)。
 
 安装包由 GitHub Actions 完成类型检查、单元测试、原生检查、打包和校验和核验。实机运行与真实云端同步不在这套自动化里，记录为未验证。见 [CI 流程](docs/ci.md)。
 
@@ -98,15 +98,14 @@ Granite 是电子书阅读器和个人书库。书籍、标注、笔记、进度
 
 两个工作流都可以在 Actions 页面手动运行。Windows 的手动运行与普通推送相同。Android 的手动运行生成发布密钥签名的候选 APK，不创建 Release。
 
-发布前先更新源码中的版本号，然后推送 `v*` 标签：
+发布前统一更新 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json` 的版本号，然后创建并推送 `release/X.Y.Z` 分支，再向 `main` 提交 PR：
 
 ```powershell
-git tag vX.Y.Z
-git push origin vX.Y.Z
+git switch -c release/0.1.1
+git push -u origin release/0.1.1
 ```
 
-标签会让两个工作流构建并上传到同一个 GitHub Release，分别附带 `SHA256SUMS.windows` 与 `SHA256SUMS.android`。Windows 安装包不签名。Android 使用仓库里配置的签名 Secrets，目标为 `aarch64`，不生成 AAB，也不启动模拟器。
-
+PR 的 Windows 与 Android 检查全部通过并合并后，两个平台工作流分别创建 `vX.Y.Z-windows` 与 `vX.Y.Z-android` Release，上传各自安装包和 SHA-256 清单。Windows 安装包不签名；Android 使用仓库里配置的签名 Secrets，目标为 `aarch64`，不生成 AAB，也不启动模拟器。
 工作流使用 Node.js 22、稳定版 Rust 和 Temurin 17。Android 编译使用 SDK 37 与 NDK 29。Rust 包声明的最低版本为 1.77.2。
 
 根目录的 `CLEAN-LOCAL.cmd` 只删除脚本列出的、可以重建的本机文件，并保留源码、Git 和 `private/signing`。

@@ -2,11 +2,12 @@ name: Android
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, closed]
   push:
     branches:
       - "**"
     tags:
-      - "v*"
+      - "v*-android"
   workflow_dispatch:
 
 permissions:
@@ -26,7 +27,7 @@ env:
 jobs:
   debug:
     name: Checks and Debug APK
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    if: (github.event_name == 'pull_request' && github.event.action != 'closed') || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -119,7 +120,7 @@ jobs:
 
   release:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Signed Candidate APK' || 'Signed Release APK' }}
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -217,15 +218,21 @@ jobs:
           APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -path '*/release/*' -name '*.apk' | sort | head -n 1)"
           test -n "$APK"
 
+          VERSION="$(
+            node -e \
+              "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json', 'utf8')).version)"
+          )"
+          test -n "$VERSION"
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            VERSION="$(
-              node -e \
-                "const fs = require('node:fs'); process.stdout.write(JSON.parse(fs.readFileSync('package.json', 'utf8')).version)"
-            )"
-            test -n "$VERSION"
             ASSET_NAME="Granite-${VERSION}-candidate-aarch64.apk"
           else
-            ASSET_NAME="Granite-${GITHUB_REF_NAME}-aarch64.apk"
+            ASSET_NAME="Granite-${VERSION}-android-aarch64.apk"
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              RELEASE_TAG="$GITHUB_REF_NAME"
+            else
+              RELEASE_TAG="v${VERSION}-android"
+            fi
+            echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
           fi
 
           cp "$APK" "artifacts/android/release-assets/$ASSET_NAME"
@@ -242,7 +249,7 @@ jobs:
             if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
               echo "Signed candidate APK only. This run does not create a GitHub Release."
             else
-              echo "Signed tag release APK. The release is created only after verification succeeds."
+              echo "Signed Android release APK. The release is created only after verification succeeds."
             fi
             echo
             echo "- Asset: \`$SIGNED_APK_ASSET\`"
@@ -259,17 +266,19 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Publish Android GitHub Release
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'release/'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF_NAME}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "Granite ${GITHUB_REF_NAME}" --verify-tag --generate-notes || \
-            gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null
-          gh release upload "${GITHUB_REF_NAME}" \
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Granite $RELEASE_TAG (Android ARM64)" \
+              --notes "Android ARM64 release. Windows has its own platform release." || \
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release upload "$RELEASE_TAG" \
             artifacts/android/release-assets/*.apk \
             artifacts/android/release-assets/SHA256SUMS.android \
-            --repo "${GITHUB_REPOSITORY}" --clobber
+            --repo "$GITHUB_REPOSITORY" --clobber
