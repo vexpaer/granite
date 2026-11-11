@@ -51,7 +51,7 @@ const categories = [
   { id: 'appearance', label: '外观与布局', icon: MonitorCog },
   { id: 'library', label: '书库与文件夹', icon: FolderCog },
   { id: 'reader', label: '阅读器', icon: BookOpen },
-  { id: 'shortcuts', label: '快捷键与输入', icon: Keyboard },
+  { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'data', label: '数据与备份', icon: Database },
   { id: 'about', label: '关于 Granite', icon: Info },
 ];
@@ -404,7 +404,7 @@ onBeforeUnmount(() => {
 
       <section class="settings-content surface-card">
         <template v-if="category === 'general'">
-          <div class="settings-section-heading"><h2>通用</h2><p>本地资料、语言和阅读行为。</p></div>
+          <div class="settings-section-heading"><h2>通用</h2><p>本地资料与阅读行为。</p></div>
           <div class="settings-avatar">
             <span class="settings-avatar__mark">{{ initials(draft.username) }}</span>
             <label class="form-field">
