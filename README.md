@@ -58,8 +58,8 @@ Granite 是电子书阅读器和个人书库。书籍、标注、笔记、进度
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| Windows x64 | [Granite-0.1.1-windows-x64-setup.exe](https://github.com/vexpaer/granite/releases/download/v0.1.1/Granite-0.1.1-windows-x64-setup.exe) | 8.04 MB，NSIS，未做代码签名，需要 WebView2 |
-| Android ARM64 | [Granite-v0.1.1-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.1/Granite-v0.1.1-aarch64.apk) | 22.97 MB，发布密钥签名，Android 7.0（API 24）起 |
+| Windows x64 | [Granite-v0.1.1-windows-x64-setup.exe](https://github.com/vexpaer/granite/releases/download/v0.1.1/Granite-v0.1.1-windows-x64-setup.exe) | NSIS，未做代码签名，需要 WebView2 |
+| Android ARM64 | [Granite-v0.1.1-aarch64.apk](https://github.com/vexpaer/granite/releases/download/v0.1.1/Granite-v0.1.1-aarch64.apk) | 发布密钥签名，Android 7.0（API 24）起 |
 
 校验和见 [SHA256SUMS](https://github.com/vexpaer/granite/releases/download/v0.1.1/SHA256SUMS)。
 
