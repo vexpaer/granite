@@ -1,5 +1,7 @@
 # Granite Architecture Decisions
 
+**Current validation policy — U3, 2026-11-11:** all dependency installation, minimal tests, builds and publication run only on GitHub-hosted Actions. Tests GitHub cannot perform are waived with no mandatory local/manual follow-up. Any older evidence-gate statements below are historical and superseded; implementation and data-safety constraints remain binding. See [ci.md](ci.md).
+
 - **Baseline:** 2026-11-09
 - **Authoritative source:** [`granite 规格书/Granite 规格书.md`](../granite%20规格书/Granite%20规格书.md)
 - **Repository:** [https://github.com/vexpaer/granite](https://github.com/vexpaer/granite)

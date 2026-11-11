@@ -8,4 +8,6 @@
 
 用户可双击根目录 `CLEAN-LOCAL.cmd` 执行已准备的明确目录清单；也可以在 PowerShell 中用 `./scripts/clean-local.ps1 -Preview` 只查看。脚本检查 Git 根目录、工作区边界、跟踪文件及链接，保留并核对签名文件，在 `private/local-cleanup-report.json` 记录删除结果及前后盘符可用空间。运行完成后以实际盘符空间和报告为准；被占用的目录会单独报告失败，不能当作已清理。
 
+脚本语法已在 [GitHub Windows run 42964634660](https://github.com/vexpaer/granite/actions/runs/42964634660) 通过检查；未代用户运行删除。Windows 和 Android 的远程构建均已通过，之后无需在本机重建这些环境。
+
 后续不再在本机安装依赖或构建测试，当前流程见 [ci.md](ci.md)。

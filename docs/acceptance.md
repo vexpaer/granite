@@ -4,6 +4,8 @@ Updated 2026-11-11 (Asia/Shanghai). Authority: [Granite 规格书](../granite%20
 
 All future installation, builds and minimal tests run only in GitHub-hosted Actions, as described in [ci.md](ci.md). Tests GitHub cannot perform are **WAIVED / NOT VERIFIED**, with no local/manual follow-up requirement. No browser/device/live-cloud matrix is required. Historical local and browser results below remain evidence of v0.1.0 only, not future execution requirements. Emulators remain prohibited; known data-safety, startup or core-reading faults still block publication.
 
+The GitHub-only migration is verified by successful [Windows run 42964634660](https://github.com/vexpaer/granite/actions/runs/42964634660) and [Android run 42963038348](https://github.com/vexpaer/granite/actions/runs/42963038348). Both uploaded their packages and checksum artifacts; no local build/test or new artifact download was performed. Actual disk cleanup remains pending user execution because automatic approval rejected local recursive deletion; see [disk-cleanup.md](disk-cleanup.md).
+
 ## Historical v0.1.0 delivery evidence
 
 | Criterion | State and evidence |
@@ -23,7 +25,7 @@ The first release was delivered with the recorded automated/native/CI checks, ar
 
 ## Implementation and evidence index
 
-This index maps the specification's first-release areas to the shipped sources and relevant automated evidence. A test covers its assertions, not every platform behavior in the linked area. All native application interactions and live-service checks remain user-manual under U2.
+This index maps the specification's first-release areas to the shipped sources and relevant historical evidence. A test covers its assertions, not every platform behavior in the linked area. Under U3, native application interactions and live-service checks are waived; the browser flows listed here are historical, not required future tests.
 
 | Specification area | Implementation | Automated evidence |
 | --- | --- | --- |
@@ -46,4 +48,4 @@ This index maps the specification's first-release areas to the shipped sources a
 | 12 private SQLite and credentials | `src-tauri/src/database.rs`, `credentials.rs`, Android Keystore bridge | Rust database/migration and compile checks; live credential use remains user-manual |
 | 14 Windows/Android deliverables | `.github/workflows/android.yml`, `scripts/desktop.mjs`, `scripts/android.mjs` | Windows build record, CI runs and downloaded artifact/signature/checksum inspection |
 
-The earlier detailed criterion IDs referenced by the architecture notes are retained in the [historical ledger](https://github.com/vexpaer/granite/blob/4203e6d2e4886d58edd1ca192c626b7758d37894/docs/acceptance.md). Its old test counts and device/cloud gate states are historical and superseded by this record and U2.
+The earlier detailed criterion IDs referenced by the architecture notes are retained in the [historical ledger](https://github.com/vexpaer/granite/blob/4203e6d2e4886d58edd1ca192c626b7758d37894/docs/acceptance.md). Its old test counts and device/cloud gate states are historical and superseded by this record and U3.

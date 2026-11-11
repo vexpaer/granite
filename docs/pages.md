@@ -1,5 +1,7 @@
 # Granite Page and Route Contract
 
+**U3 (2026-11-11):** current checks/builds are GitHub-only and minimal. GitHub-incompatible device/live-service checks are waived; no local/manual follow-up is required. Older platform-evidence text below is historical. Page behavior remains an implementation requirement; see [ci.md](ci.md).
+
 ## Shell Boundary
 
 `src/App.vue` owns route rendering, global search, scroll-position restoration,

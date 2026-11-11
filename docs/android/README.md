@@ -1,5 +1,7 @@
 # Android implementation
 
+**Current U3 policy (2026-11-11):** build/test/sign/publish only in GitHub Actions, with simple automated checks. Device/live-cloud tests are waived with no required manual follow-up. Local toolchain and deferred runbook text linked below are historical. See [ci.md](../ci.md).
+
 Granite uses Tauri 2 with the system Android WebView. The Android-only native
 adapter lives in `native/android-bridge`; the generated host project lives in
 `src-tauri/gen/android`.

@@ -1,5 +1,7 @@
 # Deferred Android and live-provider acceptance runbook
 
+**U3, 2026-11-11:** this is historical reference only. GitHub-incompatible checks are waived with no required manual follow-up. Do not execute this runbook as a development or release gate. Current process: [ci.md](../ci.md).
+
 ## Current status
 
 **WAIVED for this delivery.** The user clarified on 2026-11-10 that all real
