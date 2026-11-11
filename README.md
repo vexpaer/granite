@@ -98,14 +98,14 @@ Granite 是电子书阅读器和个人书库。书籍、标注、笔记、进度
 
 两个工作流都可以在 Actions 页面手动运行。Windows 的手动运行与普通推送相同。Android 的手动运行生成发布密钥签名的候选 APK，不创建 Release。
 
-发布前统一更新 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json` 的版本号，然后推送 `release/X.Y.Z` 分支：
+发布前统一更新 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json` 的版本号，然后创建并推送 `release/X.Y.Z` 分支，再向 `main` 提交 PR：
 
 ```powershell
 git switch -c release/0.1.1
 git push -u origin release/0.1.1
 ```
 
-两个平台工作流分别创建 `vX.Y.Z-windows` 与 `vX.Y.Z-android` Release，并上传各自安装包和 SHA-256 清单。Windows 安装包不签名；Android 使用仓库里配置的签名 Secrets，目标为 `aarch64`，不生成 AAB，也不启动模拟器。
+PR 的 Windows 与 Android 检查全部通过并合并后，两个平台工作流分别创建 `vX.Y.Z-windows` 与 `vX.Y.Z-android` Release，上传各自安装包和 SHA-256 清单。Windows 安装包不签名；Android 使用仓库里配置的签名 Secrets，目标为 `aarch64`，不生成 AAB，也不启动模拟器。
 工作流使用 Node.js 22、稳定版 Rust 和 Temurin 17。Android 编译使用 SDK 37 与 NDK 29。Rust 包声明的最低版本为 1.77.2。
 
 根目录的 `CLEAN-LOCAL.cmd` 只删除脚本列出的、可以重建的本机文件，并保留源码、Git 和 `private/signing`。
