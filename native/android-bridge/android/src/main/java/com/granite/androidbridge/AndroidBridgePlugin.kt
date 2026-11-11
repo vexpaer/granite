@@ -21,6 +21,8 @@ import app.tauri.plugin.Plugin
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import java.util.ArrayDeque
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -35,6 +37,7 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
     private val credentials = KeystoreCredentialVault(activity.applicationContext)
     private val shareInbox = ShareInbox(activity.applicationContext)
     private val lifecycle = AndroidLifecycleController(activity)
+    private val pendingPickedBooks = ConcurrentHashMap<String, Uri>()
     private var pendingExport: PendingExport? = null
 
     private var pendingBack: Invoke? = null
@@ -148,7 +151,10 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
             "book.trash",
             "credential.set",
             "credential.delete",
+            "file.readPickedBook",
+            "file.releasePickedBooks",
             "share.consume",
+            "share.read",
             "share.ack",
             "diagnostics",
             -> executeIo(invoke, request.op, request.args)
@@ -310,20 +316,26 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
         }
         val uris = resultUris(result.data)
         ioExecutor.execute {
+            val createdIds = mutableListOf<String>()
             try {
                 val books = JSArray()
                 for (uri in uris) {
-                    val (name, bytes) = saf.readUri(uri)
+                    val name = saf.displayName(uri) ?: uri.lastPathSegment ?: "imported-book"
                     if (bookExtension(name) == null) continue
+                    val id = UUID.randomUUID().toString()
+                    pendingPickedBooks[id] = uri
+                    createdIds += id
                     books.put(
                         JSObject()
+                            .put("id", id)
                             .put("name", name)
-                            .put("bytes", bytesToJsArray(bytes)),
+                            .put("size", saf.sizeUri(uri)),
                     )
                 }
                 activity.runOnUiThread { invoke.resolveObject(books) }
             } catch (exception: Exception) {
-                rejectSafely(invoke, exception, "The selected books could not be read")
+                createdIds.forEach { pendingPickedBooks.remove(it) }
+                rejectSafely(invoke, exception, "The selected books could not be prepared")
             }
         }
     }
@@ -427,6 +439,23 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
                     ?: throw BridgeFailure("Missing destination library root")
                 saf.migrate(from, to)
             }
+            "file.readPickedBook" -> {
+                val id = requiredString(args, "id")
+                val uri = pendingPickedBooks[id]
+                    ?: throw BridgeFailure("The selected book handle has expired")
+                try {
+                    val (name, bytes) = saf.readUri(uri)
+                    JSObject()
+                        .put("name", name)
+                        .put("bytes", bytesToJsArray(bytes))
+                } finally {
+                    pendingPickedBooks.remove(id)
+                }
+            }
+            "file.releasePickedBooks" -> {
+                requiredStringSet(args, "ids").forEach { pendingPickedBooks.remove(it) }
+                true
+            }
             "book.import" -> {
                 val imported = saf.importBook(
                     requiredRoot(args),
@@ -489,6 +518,7 @@ class AndroidBridgePlugin(private val activity: Activity) : Plugin(activity) {
             }
             "credential.delete" -> credentials.delete(requiredString(args, "id"))
             "share.consume" -> shareInbox.consume()
+            "share.read" -> shareInbox.read(requiredString(args, "id"))
             "share.ack" -> {
                 val ids = requiredStringSet(args, "ids")
                 JSObject().put("acknowledged", shareInbox.acknowledge(ids))
