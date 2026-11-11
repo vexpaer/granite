@@ -105,7 +105,7 @@ git switch -c release/0.1.1
 git push -u origin release/0.1.1
 ```
 
-PR 的 Windows 与 Android 检查全部通过并合并后，两个平台工作流分别创建 `vX.Y.Z-windows` 与 `vX.Y.Z-android` Release，上传各自安装包和 SHA-256 清单。Windows 安装包不签名；Android 使用仓库里配置的签名 Secrets，目标为 `aarch64`，不生成 AAB，也不启动模拟器。
+PR 创建后，Windows 与 Android 工作流分别完成检查、构建和发布，生成 `vX.Y.Z-windows` 与 `vX.Y.Z-android` Release，并上传各自安装包和 SHA-256 清单。Release tag 指向 PR 分支提交；两个平台发布成功后再合并 PR。Windows 安装包不签名；Android 使用仓库里配置的签名 Secrets，目标为 `aarch64`，不生成 AAB，也不启动模拟器。
 工作流使用 Node.js 22、稳定版 Rust 和 Temurin 17。Android 编译使用 SDK 37 与 NDK 29。Rust 包声明的最低版本为 1.77.2。
 
 根目录的 `CLEAN-LOCAL.cmd` 只删除脚本列出的、可以重建的本机文件，并保留源码、Git 和 `private/signing`。

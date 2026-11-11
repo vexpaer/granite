@@ -14,8 +14,7 @@ import {
 } from 'lucide-vue-next';
 import { useApp } from '../stores/app';
 import PageHeader from '../components/PageHeader.vue';
-import packageInfo from '../../package.json';
-import { initials } from '../components/utils';
+import { initials, relativeTime } from '../components/utils';
 
 const app = useApp();
 const editingName = ref(false);
@@ -24,6 +23,7 @@ const username = computed(() => app.settings.username?.trim() || '本地读者')
 const providerName = computed(() => app.settings.provider?.name || '未配置');
 const enabledRoots = computed(() => app.roots.filter((root) => root.enabled));
 const enabledPlugins = computed(() => app.plugins.filter((plugin) => plugin.enabled));
+const latestSync = computed(() => app.syncHistory[0]);
 
 const groups = computed(() => [
   {
@@ -78,6 +78,18 @@ const groups = computed(() => [
         detail: '快捷键、备份与数据',
         icon: Settings2,
         route: 'settings',
+      },
+    ],
+  },
+  {
+    label: '信息',
+    items: [
+      {
+        title: '关于 Granite',
+        detail: '版本信息与软件更新',
+        icon: Info,
+        route: 'settings',
+        id: 'about',
       },
     ],
   },
@@ -137,9 +149,9 @@ function openItem(route: string, id?: string) {
         <span><strong>{{ enabledPlugins.length }} / {{ app.plugins.length }}</strong>插件已启用</span>
         <ChevronRight :size="16" />
       </button>
-      <button class="surface-card me-status" type="button" @click="app.navigate('settings', 'about')">
-        <Info :size="19" />
-        <span><strong>v{{ packageInfo.version }}</strong>关于 Granite</span>
+      <button class="surface-card me-status" type="button" @click="app.navigate('sync')">
+        <Cloud :size="19" />
+        <span><strong>{{ latestSync ? latestSync.status : '无记录' }}</strong>{{ latestSync ? relativeTime(latestSync.at) : '尚未同步' }}</span>
         <ChevronRight :size="16" />
       </button>
     </section>
